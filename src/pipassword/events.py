@@ -159,6 +159,13 @@ class Record:
     pinyin: Mapping[str, str]
     created_at: int
     updated_at: int
+    last_device: bytes = b""
+    """Device whose event last modified this record.
+
+    Needed for requirement 3.11, the "4 entries added on pi4 since you last
+    opened this" summary. Tracked during the fold because the information is only
+    available there: it is not a property of any single field.
+    """
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.fields.get(key, default)
@@ -348,6 +355,7 @@ def fold(events: Iterable[Event]) -> FoldResult:
     pinyin: dict[str, dict[str, str]] = {}
     created: dict[str, int] = {}
     updated: dict[str, int] = {}
+    last_device: dict[str, bytes] = {}
     deleted: dict[str, int] = {}
     highest_ts = 0
     count = 0
@@ -365,11 +373,13 @@ def fold(events: Iterable[Event]) -> FoldResult:
         if event.op == OP_DEL:
             deleted[rid] = event.ts
             updated[rid] = event.ts
+            last_device[rid] = event.device_uuid
             continue
 
         fields[rid].update(event.fields)
         pinyin[rid].update(event.pinyin)
         updated[rid] = event.ts
+        last_device[rid] = event.device_uuid
         # Applying in sorted order means any set reaching here is later than an
         # earlier delete, so it resurrects the record (requirement 3.6).
         deleted.pop(rid, None)
@@ -381,6 +391,7 @@ def fold(events: Iterable[Event]) -> FoldResult:
             pinyin=dict(pinyin[rid]),
             created_at=created[rid],
             updated_at=updated[rid],
+            last_device=last_device.get(rid, b""),
         )
         for rid, values in fields.items()
         if rid not in deleted

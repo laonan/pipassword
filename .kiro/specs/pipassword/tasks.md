@@ -54,7 +54,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test: concurrent edits to different fields of one record both survive
   - _Requirements: 3.3, 3.5, 3.6, 3.7, 3.8_
 
-- [ ] 6. Vault API (`vault.py`)
+- [x] 6. Vault API (`vault.py`)
   - `Vault.create`, `Vault.unlock(password | recovery_key)`, `Vault.close` zeroing
     what can be zeroed
   - `device_id` provisioning in `~/.config/pipassword/device_id`, never inside the
