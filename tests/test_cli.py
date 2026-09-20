@@ -531,3 +531,36 @@ class TestBenchmark:
         assert run("benchmark", "-n", "150")[0] == 0
         after = set(Path(tempfile.gettempdir()).glob("pipw-bench-*"))
         assert after == before
+
+
+class TestBenchmarkExtrapolation:
+    """A verdict measured at 2,000 records must not be reported as if it were
+    measured at the 10,000-record budget. Real Beepy numbers exposed this: 520ms at
+    2,000 was reported as 'comfortably inside', but it projects to ~2.6s at 10,000.
+    """
+
+    def test_reports_a_projection_when_measuring_fewer(self, run):
+        code, out, err = run("benchmark", "-n", "200")
+        assert code == 0, err
+        assert "at 10,000 records" in out
+        assert "projected from 200" in out
+        assert "extrapolated" in err
+
+    def test_projection_exceeds_the_measured_total(self, run):
+        code, out, _ = run("benchmark", "-n", "200")
+        measured = float(
+            next(l for l in out.splitlines() if l.strip().startswith("total")).split()[1]
+        )
+        projected = float(
+            next(l for l in out.splitlines() if "at 10,000 records" in l).split()[3]
+        )
+        assert projected > measured * 10, (
+            f"projecting 200 -> 10000 should scale up by >=50x, got "
+            f"{projected:.0f} from {measured:.0f}"
+        )
+
+    def test_no_projection_disclaimer_at_full_size(self, run):
+        code, out, err = run("benchmark", "-n", "10000")
+        assert code == 0, err
+        assert "(measured)" in out
+        assert "extrapolated" not in err

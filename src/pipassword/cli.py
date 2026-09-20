@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import math
 import os
 import sys
 import time
@@ -877,24 +878,50 @@ def cmd_benchmark(args: argparse.Namespace, console: Console) -> int:
         console.out("")
         console.out(f"search {len(matches)} of {count}    {search_s * 1000:8.1f} ms")
 
-        console.err("")
+        # Requirement 3.14 budgets 3 seconds at 10,000 records. Measuring a smaller
+        # vault and reporting against that budget directly would be falsely
+        # reassuring, so extrapolate. Frame decrypt and decode are linear in record
+        # count; the fold's sort adds a log factor, which is folded in below.
+        target = 10_000
         budget = 3.0
-        if total_s <= budget / 3:
+        if count >= target:
+            projected = total_s
+            basis = "measured"
+        else:
+            ratio = target / count
+            log_factor = math.log2(target) / math.log2(count) if count > 1 else 1.0
+            projected = (decrypt_s + decode_s) * ratio + fold_s * ratio * log_factor
+            basis = f"projected from {count:,}"
+
+        console.out("")
+        console.out(
+            f"at {target:,} records      {projected * 1000:8.0f} ms   ({basis})"
+        )
+
+        console.err("")
+        if count < target:
             console.err(
-                f"Comfortably inside the {budget:.0f}s unlock budget. Native code "
-                f"would not buy you anything you would notice."
+                f"Measured {count:,} records. The {budget:.0f}s budget is defined at "
+                f"{target:,}, so the figure above is extrapolated; run with "
+                f"-n {target} for a real one."
             )
-        elif total_s <= budget:
+        if projected <= budget / 3:
             console.err(
-                f"Inside the {budget:.0f}s unlock budget, with margin to spare "
-                f"shrinking. Log compaction is the cheaper lever than native code: "
-                f"it would collapse these {count} frames into one."
+                f"Well inside the {budget:.0f}s budget at {target:,} records. Native "
+                f"code would not buy you anything you would notice."
+            )
+        elif projected <= budget:
+            console.err(
+                f"Inside the {budget:.0f}s budget at {target:,} records, but the "
+                f"margin is thin. Log compaction is the cheaper lever than native "
+                f"code: it would collapse those frames into one snapshot, and stays "
+                f"in Python."
             )
         else:
             console.err(
-                f"Over the {budget:.0f}s unlock budget. Implement log compaction "
-                f"first: it removes this work entirely rather than making it faster, "
-                f"and stays in Python. Only reach for C if that is not enough."
+                f"Over the {budget:.0f}s budget at {target:,} records. Implement log "
+                f"compaction first: it removes this work rather than speeding it up. "
+                f"Only reach for C if that is not enough."
             )
         console.err(
             "Add key derivation on top of this: run 'pipw calibrate' for that half."
