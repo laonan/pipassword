@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pipassword"
+version = "0.1.0"
+description = "A TUI password vault for Raspberry Pi hardware, including the Beepy handheld."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Laonan", email = "hello@laonan.net" }]
+keywords = ["password-manager", "tui", "raspberry-pi", "beepy", "argon2"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+]
+
+# Exact pins. This is a leaf application installed with pipx, not a library, so
+# reproducible resolution on a low-powered device matters more than flexible
+# co-installation. Every pin below has a verified manylinux aarch64 wheel or is
+# pure Python; nothing here compiles from source on Raspberry Pi OS (req 1.2).
+dependencies = [
+    "cryptography==50.0.1",   # ChaCha20-Poly1305            (aarch64 wheel)
+    "argon2-cffi==25.1.0",    # Argon2id, parallelism=4      (aarch64 wheel)
+    "prompt_toolkit==3.0.53", # TUI                          (pure Python)
+    "wcwidth==0.8.4",         # CJK-correct display width    (pure Python)
+    "pypinyin==0.55.0",       # write-time index only        (pure Python)
+    "pyotp==2.10.0",          # TOTP                         (pure Python)
+]
+# Event payloads use stdlib `json`, not CBOR. Every field is text, so a binary
+# encoding buys nothing measurable at the 10k-record target, and one fewer
+# dependency is worth more in a password manager.
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+]
+
+[project.scripts]
+pipw = "pipassword.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/laonan/pipassword"
+Issues = "https://github.com/laonan/pipassword/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"

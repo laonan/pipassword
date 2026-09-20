@@ -1,0 +1,25 @@
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Never commit vault material. A vault directory, a keyfile, a log, an export,
+# or a recovery key must not reach version control under any circumstances.
+*.mpk
+*.mpl
+*.mpv
+vault/
+*-export.json
+recovery-key*.txt
+
+# Legacy minipassword artefacts, in case anything is copied here for testing.
+*.db
+*.ini
+importseed
