@@ -24,7 +24,9 @@ from pipassword.vault import Vault
 
 FAST = crypto.KdfParams(time_cost=1, memory_cost_kib=64, parallelism=1)
 PW = "master passphrase"
-RECOVER = Path(__file__).resolve().parent.parent / "recover.py"
+ROOT = Path(__file__).resolve().parent.parent
+RECOVER = ROOT / "recover.py"
+PACKAGED = ROOT / "src" / "pipassword" / "recovery_tool.py"
 
 
 @pytest.fixture
@@ -132,6 +134,30 @@ class TestIndependence:
 
     def test_is_executable(self):
         assert RECOVER.stat().st_mode & stat.S_IXUSR, "recover.py should be chmod +x"
+
+    def test_packaged_copy_is_identical(self):
+        """The wheel ships a copy so pipx users can reach it.
+
+        Two locations, one enforced truth: the root file is discoverable in the
+        repository (requirement 6.3), and the packaged file is what
+        'pipw recovery-script' emits. They must never drift.
+        """
+        assert PACKAGED.is_file(), "recovery_tool.py missing from the package"
+        assert PACKAGED.read_bytes() == RECOVER.read_bytes(), (
+            "recover.py and src/pipassword/recovery_tool.py have diverged; "
+            "copy the root file over the packaged one"
+        )
+
+    def test_packaged_copy_also_imports_nothing_from_the_package(self):
+        tree = ast.parse(PACKAGED.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert not node.level, "must not use relative imports"
+                assert (node.module or "").split(".")[0] != "pipassword"
+            if isinstance(node, ast.Import):
+                assert all(
+                    a.name.split(".")[0] != "pipassword" for a in node.names
+                )
 
     def test_has_a_shebang(self):
         assert RECOVER.read_bytes().startswith(b"#!/usr/bin/env python3")

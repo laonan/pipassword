@@ -455,3 +455,34 @@ class TestHealthReporting:
         code, _, err = run("list", stdin=f"{PW}\n")
         assert code == 0
         assert "warning:" in err
+
+
+class TestRecoveryScript:
+    """The recovery tool must be reachable by someone who only used pipx."""
+
+    def test_writes_an_executable_copy(self, run, tmp_path: Path):
+        target = tmp_path / "recover.py"
+        code, _, err = run("recovery-script", "-o", str(target))
+        assert code == 0, err
+        assert target.is_file()
+        assert target.stat().st_mode & 0o100  # owner-executable
+        assert "cryptography and argon2-cffi" in err
+
+    def test_prints_to_stdout_by_default(self, run):
+        code, out, _ = run("recovery-script")
+        assert code == 0
+        assert out.startswith("#!/usr/bin/env python3")
+        assert "pipassword" not in out.split("\n")[0]
+
+    def test_emitted_copy_matches_the_repository_file(self, run, tmp_path: Path):
+        target = tmp_path / "recover.py"
+        assert run("recovery-script", "-o", str(target))[0] == 0
+        root = Path(__file__).resolve().parent.parent
+        assert target.read_text() == (root / "recover.py").read_text()
+
+    def test_needs_no_vault(self, isolate_home: Path):
+        """Being locked out must not be a prerequisite failure."""
+        runner = Runner(isolate_home / "absent", isolate_home / "absent-cfg")
+        code, out, _ = runner("recovery-script")
+        assert code == 0
+        assert "ChaCha20Poly1305" in out

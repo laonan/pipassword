@@ -152,7 +152,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Detect terminal size; two-pane list/detail above 80 columns
   - _Requirements: 4.9_
 
-- [ ] 17. Packaging and documentation
+- [x] 17. Packaging and documentation
   - `pipx install pipassword` as the documented path; drop the legacy
     `break-system-packages` advice
   - README: Syncthing setup (share the directory, staggered versioning, `.stignore`,

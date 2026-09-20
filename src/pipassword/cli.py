@@ -781,6 +781,35 @@ def cmd_import_json(args: argparse.Namespace, console: Console) -> int:
     return _run_import(args, console, records, failures, str(path))
 
 
+def cmd_recovery_script(args: argparse.Namespace, console: Console) -> int:
+    """Write out the standalone recovery tool.
+
+    This exists because the person who needs recover.py most is the one who
+    installed with pipx and has no git checkout. The file ships inside the package
+    so it is always reachable, even though it imports nothing from the package.
+    """
+    from pathlib import Path as _Path
+
+    source = _Path(__file__).with_name("recovery_tool.py")
+    if not source.is_file():  # pragma: no cover - would be a packaging failure
+        console.err(f"error: {source} is missing from this installation")
+        return 1
+
+    text = source.read_text(encoding="utf-8")
+    if args.output:
+        target = _Path(args.output)
+        target.write_text(text, encoding="utf-8")
+        target.chmod(0o755)
+        console.err(f"Wrote {target} ({len(text.splitlines())} lines, executable).")
+        console.err(
+            "It needs only cryptography and argon2-cffi, and nothing from "
+            "pipassword. Keep a copy somewhere you can reach without this tool."
+        )
+    else:
+        console.out(text)
+    return 0
+
+
 def cmd_where(args: argparse.Namespace, console: Console) -> int:
     vault_dir = resolve_vault_dir(args)
     config_dir = resolve_config_dir(args)
@@ -947,6 +976,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_json.add_argument("path")
     p_json.add_argument("--dry-run", action="store_true")
     p_json.set_defaults(func=cmd_import_json)
+
+    p_rec = sub.add_parser(
+        "recovery-script",
+        help="write out the standalone recovery tool (needs no vault)",
+    )
+    p_rec.add_argument("-o", "--output", help="write here instead of stdout")
+    p_rec.set_defaults(func=cmd_recovery_script)
 
     p_where = sub.add_parser("where", help="show vault and config paths")
     p_where.set_defaults(func=cmd_where)
