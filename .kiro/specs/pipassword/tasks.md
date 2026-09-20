@@ -44,7 +44,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test: a frame moved between two logs must fail authentication
   - _Requirements: 3.9, 3.10, 2.9_
 
-- [ ] 5. Event model and fold (`events.py`)
+- [x] 5. Event model and fold (`events.py`)
   - CBOR event encode/decode per design §3.3
   - `next_ts(highest_seen)` hybrid logical clock
   - `fold(events)` sorting on `(ts, device_uuid, seq)`, per-field last-write-wins,
