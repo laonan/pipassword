@@ -67,13 +67,13 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - `config.toml` load/save containing no secrets
   - _Requirements: 2.11, 3.1, 3.2, 3.4, 3.11, 3.12, 4.17, 7.3_
 
-- [ ] 7. `FORMAT.md`
+- [x] 7. `FORMAT.md`
   - Normative byte-level specification of keyfile and log, including AAD construction,
     the fold ordering rule, and the HLC rule
   - Sufficient to write an independent decryptor with no reference to the source
   - _Requirements: 6.4_
 
-- [ ] 8. Standalone `recover.py`
+- [x] 8. Standalone `recover.py`
   - Single file outside the package, importing only `cryptography` and `argon2-cffi`
   - Accepts a vault directory plus master password or recovery key; emits plaintext
     JSON on stdout
