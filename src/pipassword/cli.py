@@ -28,6 +28,7 @@ from typing import Any, Sequence, TextIO
 
 from . import __version__
 from . import crypto, events as ev, format as fmt
+from .importer import ImportError_ as _ImporterError
 from .vault import (
     DuplicateNameError,
     RecordNotFoundError,
@@ -553,6 +554,118 @@ def cmd_calibrate(args: argparse.Namespace, console: Console) -> int:
     return 0
 
 
+def _run_import(
+    args: argparse.Namespace,
+    console: Console,
+    records: list[Any],
+    failures: list[tuple[str, str]],
+    source: str,
+) -> int:
+    """Shared tail of both import commands: apply, close, reopen, verify."""
+    from . import importer
+
+    vault_dir = resolve_vault_dir(args)
+    config_dir = resolve_config_dir(args)
+
+    if args.dry_run:
+        report = importer.apply_records(
+            _DryRunVault(), records, source=source, dry_run=True, failures=failures
+        )
+        for line in report.lines():
+            console.out(line)
+        console.err("")
+        console.err("Dry run: nothing was written.")
+        if failures:
+            console.err(
+                "Some rows could not be decrypted. They will be skipped and listed "
+                "again during the real import; the rest will still be imported."
+            )
+        return 0 if report.ok else 1
+
+    password = console.ask_secret("Master password: ")
+    vault = Vault.unlock(vault_dir, password=password, config_dir=config_dir)
+    try:
+        report = importer.apply_records(
+            vault, records, source=source, failures=failures
+        )
+    finally:
+        vault.close()
+
+    # Requirement 5.6: verify against a vault reopened cold from disk, so what is
+    # checked is what actually landed on the disk.
+    console.err("Verifying against the source...")
+    verifier = Vault.unlock(vault_dir, password=password, config_dir=config_dir)
+    try:
+        report.mismatches = importer.verify_against(verifier, records)
+        report.verified = not report.mismatches
+    finally:
+        verifier.close()
+
+    for line in report.lines():
+        console.out(line)
+
+    if not report.ok:
+        console.err("")
+        if report.mismatches:
+            console.err(
+                "error: verification FAILED. The new vault does not match the "
+                "source. Your legacy data is untouched; do not delete it."
+            )
+        else:
+            console.err(
+                "error: some rows could not be imported. Your legacy data is "
+                "untouched; do not delete it."
+            )
+        return 1
+
+    console.err("")
+    console.err("Verified: every field of every record matches the source.")
+    console.err("")
+    console.err(importer.ROTATION_ADVICE)
+    return 0
+
+
+class _DryRunVault:
+    """Stands in for a Vault during a dry run so nothing can be written.
+
+    Requirement 5.3 says a dry run writes nothing. Rather than trusting a boolean
+    to be checked everywhere, this object simply has no write methods, so a code
+    path that tried to mutate would fail loudly instead of quietly modifying a
+    vault.
+    """
+
+    def all_records(self) -> list[Any]:
+        return []
+
+
+def cmd_import_legacy(args: argparse.Namespace, console: Console) -> int:
+    from . import importer
+
+    config_path, db_path = importer.find_legacy_paths(args.legacy_dir)
+    console.err(f"Legacy config:   {config_path}")
+    console.err(f"Legacy database: {db_path}")
+    console.err("Both are opened read-only and will not be modified.")
+    console.err("")
+
+    key = importer.read_legacy_key(config_path)
+    records, failures = importer.read_legacy_records(db_path, key)
+    return _run_import(args, console, records, failures, str(db_path))
+
+
+def cmd_import_json(args: argparse.Namespace, console: Console) -> int:
+    from . import importer
+
+    path = Path(args.path)
+    console.err(f"Reading {path} (read-only).")
+    console.err(
+        "warning: this file holds every password in cleartext. Delete it once the "
+        "import is verified."
+    )
+    console.err("")
+    records, failures = importer.read_json_records(path)
+    return _run_import(args, console, records, failures, str(path))
+
+
 def cmd_where(args: argparse.Namespace, console: Console) -> int:
     vault_dir = resolve_vault_dir(args)
     config_dir = resolve_config_dir(args)
@@ -657,6 +770,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--runs", type=int, default=3)
     p_cal.set_defaults(func=cmd_calibrate)
 
+    p_imp = sub.add_parser(
+        "import-legacy",
+        help="import a minipassword vault (read-only; the original is untouched)",
+    )
+    p_imp.add_argument(
+        "--legacy-dir",
+        default="~/.minipassword",
+        help="legacy data directory (default: ~/.minipassword)",
+    )
+    p_imp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be imported and write nothing",
+    )
+    p_imp.set_defaults(func=cmd_import_legacy)
+
+    p_json = sub.add_parser(
+        "import-json", help="import the legacy plaintext JSON export format"
+    )
+    p_json.add_argument("path")
+    p_json.add_argument("--dry-run", action="store_true")
+    p_json.set_defaults(func=cmd_import_json)
+
     p_where = sub.add_parser("where", help="show vault and config paths")
     p_where.set_defaults(func=cmd_where)
 
@@ -687,6 +823,9 @@ def run(
 
     try:
         return int(args.func(args, console))
+    except _ImporterError as exc:
+        console.err(f"error: {exc}")
+        return 1
     except crypto.AuthenticationError:
         console.err(
             "error: could not unlock the vault. Wrong password, or the keyfile was "

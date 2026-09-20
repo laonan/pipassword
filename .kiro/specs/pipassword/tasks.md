@@ -89,7 +89,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Password entry without echo via `getpass`
   - _Requirements: 2.4, 2.13, 4.15, 6.1, 6.5, 6.6_
 
-- [ ] 10. Legacy import (`importer.py`)
+- [x] 10. Legacy import (`importer.py`)
   - Open the legacy SQLite via `file:...?mode=ro`; read `aes_key` from the legacy
     `config.ini`; decrypt `login_name` and `password` with Fernet
   - Module must contain no write-mode `open`, `os.remove`, or `shutil` call targeting
