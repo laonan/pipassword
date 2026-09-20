@@ -112,9 +112,41 @@ off  len  field
 174       end
 ```
 
-`HDR = bytes[0:54]`. Binding it as AAD means the version, vault UUID, generation, and
-all Argon2 parameters are authenticated — an attacker cannot downgrade `memory_cost`
-to 1 MiB and still produce a keyfile that opens.
+Each slot has its own associated data, because the two slots need to authenticate
+different things:
+
+```
+pw_aad  = bytes[0:54]                   + b"pipw-kek-slot-v1"
+rec_aad = bytes[0:26] || bytes[53:54]   + b"pipw-rkek-slot-v1"
+```
+
+`pw_aad` covers the full header, so the version, vault UUID, generation, salt, and all
+Argon2 parameters are authenticated — an attacker cannot downgrade `memory_cost` to
+1 MiB and still produce a keyfile that opens.
+
+`rec_aad` deliberately covers only the magic, format version, vault UUID, and slot
+bitfield. It excludes the generation number, the salt, and the Argon2 parameters, for
+two reasons. The principled one: the recovery slot is unwrapped by a BLAKE2b-derived
+RKEK and never touches Argon2, so binding it to Argon2 parameters would authenticate
+data the slot does not depend on. The practical one: it lets password rotation copy the
+recovery slot's 60 bytes verbatim into the new generation, since the DEK is unchanged.
+Without this, rotating the master password would require the paper recovery key to be
+physically in hand, or would force a new recovery key to be printed every time — both
+of which push the user toward not rotating at all.
+
+The trailing per-slot label makes the two slots non-interchangeable, so a `pw_ct` value
+cannot be relocated into the `rec_ct` position.
+
+### Old keyfile generations
+
+Requirement 6.6 keeps rotation append-only so a crash cannot destroy the only keyfile.
+That has a consequence worth stating plainly: while an old generation remains readable
+in the vault directory, **the old master password still opens the vault**.
+
+So rotation is: write the new generation, verify it opens, then move the old generation
+into `archive/`. The loader scans only top-level `keys.*.mpk`, so the old password
+stops working through the normal path while the file itself survives for recovery. The
+CLI tells the user to delete `archive/` once satisfied, and explains why.
 
 Keyfiles are immutable once written. Password rotation writes `keys.2.mpk`; unlock
 tries the highest generation and falls back. This preserves append-only semantics for
