@@ -587,3 +587,360 @@ def rotate_keyfile(
     if verified.unwrap_with_password(new_password, check_memory=False) != dek:
         raise FormatError("rotated keyfile verification failed")  # pragma: no cover
     return verified
+
+
+# =============================================================================
+# Log files
+# =============================================================================
+#
+# A log is a fixed header followed by independently encrypted, length-prefixed
+# frames. Three properties fall out of that shape, and all three matter on a
+# battery-powered handheld:
+#
+#   * Appending never rewrites earlier bytes, so a power cut can damage at most
+#     the trailing frame rather than the whole file.
+#   * Each frame carries its own length and its own authentication tag, so a
+#     truncated tail is detectable and skippable, and a corrupt frame in the
+#     middle does not hide the frames after it.
+#   * The AAD binds the header, which contains the vault and device UUIDs, so a
+#     frame cannot be transplanted into another device's log or another vault.
+#
+# Only one device ever writes a given log file. That is what makes Syncthing
+# conflicts structurally impossible (requirement 3.2), and it is also why append
+# is safe without any locking between machines.
+
+LOG_MAGIC = b"PIPWLOG\x00"
+LOG_VERSION = 1
+LOG_HEADER_SIZE = 42
+
+_LOG_OFF_MAGIC = 0
+_LOG_OFF_VERSION = 8
+_LOG_OFF_VAULT_UUID = 10
+_LOG_OFF_DEVICE_UUID = 26
+
+_FRAME_LEN_SIZE = 4
+
+MAX_FRAME_SIZE = 1 << 20
+"""Reject a frame length above 1 MiB.
+
+A corrupted length prefix would otherwise cause a huge allocation, or make the
+reader seek far past the end of the file looking for a boundary that is not
+there. Real events are a few hundred bytes, so this is generous by three orders
+of magnitude while still bounding the damage.
+"""
+
+__all__ += [
+    "LOG_MAGIC",
+    "LOG_VERSION",
+    "LOG_HEADER_SIZE",
+    "MAX_FRAME_SIZE",
+    "LogHeader",
+    "LogAnomaly",
+    "LogReadResult",
+    "encode_log_header",
+    "decode_log_header",
+    "create_log",
+    "append_frame",
+    "append_frames",
+    "read_log",
+    "repair_log",
+    "log_filename",
+    "find_logs",
+]
+
+
+class LogFormatError(FormatError):
+    """A log file's header is not well formed."""
+
+
+__all__.append("LogFormatError")
+
+
+@dataclass(frozen=True, slots=True)
+class LogHeader:
+    vault_uuid: bytes
+    device_uuid: bytes
+    raw: bytes
+
+    @property
+    def vault_uuid_str(self) -> str:
+        return str(uuid.UUID(bytes=self.vault_uuid))
+
+    @property
+    def device_uuid_str(self) -> str:
+        return str(uuid.UUID(bytes=self.device_uuid))
+
+
+@dataclass(frozen=True, slots=True)
+class LogAnomaly:
+    """Something wrong with a frame, reported rather than raised.
+
+    Requirement 3.9: a damaged frame must not prevent the rest of the log from
+    loading. The user is told what happened; they are not handed a dead vault.
+    """
+
+    offset: int
+    kind: str
+    detail: str
+
+    def __str__(self) -> str:
+        return f"offset {self.offset}: {self.kind}: {self.detail}"
+
+
+@dataclass(frozen=True, slots=True)
+class LogReadResult:
+    header: LogHeader
+    payloads: list[bytes]
+    anomalies: list[LogAnomaly]
+    valid_end: int
+    """Byte offset just past the last frame that decrypted successfully.
+
+    :func:`repair_log` truncates to this, which discards a half-written tail
+    without touching anything that was complete.
+    """
+
+    @property
+    def ok(self) -> bool:
+        return not self.anomalies
+
+
+def encode_log_header(vault_uuid: bytes, device_uuid: bytes) -> bytes:
+    if len(vault_uuid) != 16:
+        raise LogFormatError(f"vault_uuid must be 16 bytes, got {len(vault_uuid)}")
+    if len(device_uuid) != 16:
+        raise LogFormatError(f"device_uuid must be 16 bytes, got {len(device_uuid)}")
+    header = bytearray(LOG_HEADER_SIZE)
+    header[_LOG_OFF_MAGIC:_LOG_OFF_VERSION] = LOG_MAGIC
+    struct.pack_into("<H", header, _LOG_OFF_VERSION, LOG_VERSION)
+    header[_LOG_OFF_VAULT_UUID:_LOG_OFF_DEVICE_UUID] = vault_uuid
+    header[_LOG_OFF_DEVICE_UUID:LOG_HEADER_SIZE] = device_uuid
+    return bytes(header)
+
+
+def decode_log_header(data: bytes) -> LogHeader:
+    if len(data) < LOG_HEADER_SIZE:
+        raise LogFormatError(
+            f"log header must be {LOG_HEADER_SIZE} bytes, got {len(data)}"
+        )
+    raw = bytes(data[:LOG_HEADER_SIZE])
+    if raw[_LOG_OFF_MAGIC:_LOG_OFF_VERSION] != LOG_MAGIC:
+        raise LogFormatError("not a pipassword log (bad magic)")
+    (version,) = struct.unpack_from("<H", raw, _LOG_OFF_VERSION)
+    if version != LOG_VERSION:
+        raise UnsupportedVersionError(
+            f"log format version {version} is not supported by this build "
+            f"(expected {LOG_VERSION}); upgrade pipassword"
+        )
+    return LogHeader(
+        vault_uuid=raw[_LOG_OFF_VAULT_UUID:_LOG_OFF_DEVICE_UUID],
+        device_uuid=raw[_LOG_OFF_DEVICE_UUID:LOG_HEADER_SIZE],
+        raw=raw,
+    )
+
+
+def _frame_aad(header_raw: bytes, frame_len: int) -> bytes:
+    """Associated data for a frame: the log header plus this frame's length.
+
+    Including the header binds the frame to its vault and its device, so frames
+    cannot be moved between logs. Including the length stops a frame being
+    re-cut at a different boundary.
+    """
+    return header_raw + struct.pack("<I", frame_len)
+
+
+def log_filename(device_name: str, device_uuid: bytes) -> str:
+    """Build a log filename.
+
+    The UUID prefix guarantees uniqueness even if two devices share a hostname;
+    the human-readable part exists so that ``ls`` in a synced folder is
+    intelligible.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", device_name).strip("-").lower() or "device"
+    return f"{safe}-{device_uuid.hex()[:8]}.mpl"
+
+
+def find_logs(log_dir: Path) -> list[Path]:
+    """All log files, sorted by name for deterministic iteration."""
+    if not log_dir.is_dir():
+        return []
+    return sorted(p for p in log_dir.iterdir() if p.is_file() and p.suffix == ".mpl")
+
+
+def create_log(path: Path, vault_uuid: bytes, device_uuid: bytes) -> LogHeader:
+    """Create a log file with its header, or validate an existing one.
+
+    Idempotent: if the file already exists its header is parsed and checked
+    against the expected UUIDs, which catches a device id collision (the one way
+    requirement 3.2 could be violated).
+    """
+    header_bytes = encode_log_header(vault_uuid, device_uuid)
+    if path.exists():
+        existing = decode_log_header(path.read_bytes()[:LOG_HEADER_SIZE])
+        if existing.vault_uuid != vault_uuid:
+            raise LogFormatError(
+                f"{path.name} belongs to vault {existing.vault_uuid_str}, "
+                f"not {uuid.UUID(bytes=vault_uuid)}"
+            )
+        if existing.device_uuid != device_uuid:
+            raise LogFormatError(
+                f"{path.name} belongs to device {existing.device_uuid_str}, "
+                f"not {uuid.UUID(bytes=device_uuid)}"
+            )
+        return existing
+
+    ensure_dir(path.parent)
+    atomic_write(path, header_bytes)
+    return decode_log_header(header_bytes)
+
+
+def append_frames(path: Path, dek: bytes, payloads: list[bytes]) -> int:
+    """Append encrypted frames to a log, durably. Returns bytes written.
+
+    One ``fsync`` covers the whole batch, which matters on an SD card. Writing
+    is append-only, so a failure part way through leaves earlier frames intact
+    and at worst a partial trailing frame, which the reader skips.
+    """
+    if not payloads:
+        return 0
+    header = decode_log_header(path.read_bytes()[:LOG_HEADER_SIZE])
+
+    blob = bytearray()
+    for payload in payloads:
+        nonce = generate_nonce()
+        frame_len = NONCE_SIZE + len(payload) + TAG_SIZE
+        if frame_len > MAX_FRAME_SIZE:
+            raise LogFormatError(
+                f"frame of {frame_len} bytes exceeds the {MAX_FRAME_SIZE} byte limit"
+            )
+        ciphertext = aead_encrypt(
+            dek, nonce, payload, _frame_aad(header.raw, frame_len)
+        )
+        blob += struct.pack("<I", frame_len) + nonce + ciphertext
+
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+    try:
+        os.write(fd, bytes(blob))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return len(blob)
+
+
+def append_frame(path: Path, dek: bytes, payload: bytes) -> int:
+    return append_frames(path, dek, [payload])
+
+
+def read_log(path: Path, dek: bytes) -> LogReadResult:
+    """Read and decrypt every frame, collecting anomalies instead of raising.
+
+    Requirement 3.9. The scan is driven by each frame's explicit length, so a
+    frame that fails authentication does not hide the frames after it: the
+    reader records the problem and continues at the next boundary. Scanning
+    stops only when a boundary itself cannot be trusted, which is the case for a
+    truncated tail or an implausible length.
+    """
+    data = path.read_bytes()
+    header = decode_log_header(data)
+
+    payloads: list[bytes] = []
+    anomalies: list[LogAnomaly] = []
+    offset = LOG_HEADER_SIZE
+    valid_end = LOG_HEADER_SIZE
+    total = len(data)
+
+    while offset < total:
+        if total - offset < _FRAME_LEN_SIZE:
+            anomalies.append(
+                LogAnomaly(
+                    offset,
+                    "truncated",
+                    f"{total - offset} trailing byte(s), too short for a length "
+                    f"prefix; likely an interrupted write",
+                )
+            )
+            break
+
+        (frame_len,) = struct.unpack_from("<I", data, offset)
+        body_start = offset + _FRAME_LEN_SIZE
+
+        if frame_len < NONCE_SIZE + TAG_SIZE or frame_len > MAX_FRAME_SIZE:
+            anomalies.append(
+                LogAnomaly(
+                    offset,
+                    "bad_length",
+                    f"implausible frame length {frame_len}; cannot locate the next "
+                    f"frame boundary, so scanning stopped here",
+                )
+            )
+            break
+
+        if total - body_start < frame_len:
+            anomalies.append(
+                LogAnomaly(
+                    offset,
+                    "truncated",
+                    f"frame declares {frame_len} bytes but only "
+                    f"{total - body_start} remain; likely an interrupted write",
+                )
+            )
+            break
+
+        nonce = data[body_start : body_start + NONCE_SIZE]
+        ciphertext = data[body_start + NONCE_SIZE : body_start + frame_len]
+        try:
+            payloads.append(
+                aead_decrypt(
+                    dek, nonce, ciphertext, _frame_aad(header.raw, frame_len)
+                )
+            )
+            valid_end = body_start + frame_len
+        except AuthenticationError:
+            anomalies.append(
+                LogAnomaly(
+                    offset,
+                    "auth_failed",
+                    "frame did not authenticate; it was tampered with, or "
+                    "encrypted with a different key",
+                )
+            )
+
+        offset = body_start + frame_len
+
+    return LogReadResult(
+        header=header,
+        payloads=payloads,
+        anomalies=anomalies,
+        valid_end=valid_end,
+    )
+
+
+def repair_log(path: Path, dek: bytes) -> tuple[int, list[LogAnomaly]]:
+    """Truncate a log to its last fully valid frame.
+
+    Returns the number of bytes discarded and the anomalies that prompted it.
+
+    Only ever removes a damaged *tail*. If the log contains a bad frame with
+    good frames after it, nothing is truncated, because discarding valid data to
+    tidy up a corrupt frame would be the wrong trade. In that case the anomalies
+    are returned for reporting and the file is left alone.
+    """
+    result = read_log(path, dek)
+    if not result.anomalies:
+        return 0, []
+
+    tail_only = all(a.offset >= result.valid_end for a in result.anomalies)
+    if not tail_only:
+        return 0, result.anomalies
+
+    size = path.stat().st_size
+    discarded = size - result.valid_end
+    if discarded <= 0:
+        return 0, result.anomalies
+
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.ftruncate(fd, result.valid_end)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return discarded, result.anomalies

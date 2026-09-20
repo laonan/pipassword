@@ -35,7 +35,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test: refuse to open when `memory_cost` exceeds available RAM, naming the shortfall
   - _Requirements: 2.3, 2.5, 2.7, 2.9, 2.12_
 
-- [ ] 4. Log format (`format.py`)
+- [x] 4. Log format (`format.py`)
   - Write the 42-byte log header; `append_frame` with length prefix, 12-byte random
     nonce, AAD = `log_header || frame_len`
   - `read_frames` as a generator, returning valid frames and a list of anomalies
