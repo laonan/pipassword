@@ -216,6 +216,87 @@ Device identity lives in `~/.config/pipassword/device_id`, deliberately **outsid
 the vault. Do not sync your config directory — two devices sharing a `device_id`
 would share a log file and reintroduce conflicts.
 
+There is no built-in cloud upload. The legacy `minipassword` had one, and it is not
+carried forward on purpose: its URL validator accepted `http://` and `ftp://` and
+then POSTed the raw database to whatever it was given, and its restore path
+overwrote the local database with the response body without validating it or taking
+a snapshot first. File replication is a solved problem and Syncthing solves it
+better than a bespoke endpoint would.
+
+## Offsite backup
+
+Syncthing is replication, not backup. It keeps machines you own in step, which means
+a deletion propagates to all of them. For an offsite copy you want something that
+does not follow your mistakes.
+
+Every file in the vault is independently encrypted with a key derived from your
+passphrase, so any provider can hold it without being able to read it:
+
+```bash
+rclone sync ~/.local/share/pipassword/vault remote:pipassword-backup
+```
+
+This is strictly safer than the old upload endpoint, which shipped a database whose
+`name`, `url`, and `memo` columns were plaintext. Here the provider sees encrypted
+blobs, and the only structure it can infer is how many devices you have and roughly
+when each last made an edit, from the log filenames and their sizes.
+
+Two things worth doing deliberately:
+
+**Use `copy`, not `sync`, if you want protection from your own deletions.** `rclone
+sync` mirrors, so a record you delete locally disappears from the backup too. Or keep
+`sync` and turn on versioning at the provider.
+
+**Back up `keys.N.mpk` separately as well.** It is 174 bytes, it rarely changes, and
+**without it the logs cannot be decrypted even with the correct password.** It lives
+inside the vault directory so any backup picks it up, but a copy somewhere
+independent of that backup — alongside your paper recovery key — costs nothing and
+removes a single point of failure. It is small enough to print:
+
+```bash
+base64 ~/.local/share/pipassword/vault/keys.1.mpk
+```
+
+### Restoring
+
+There is no import step. The files on disk *are* the vault, so a restore is putting
+the directory back:
+
+```bash
+rclone copy remote:pipassword-backup ~/.local/share/pipassword/vault
+pipw list
+```
+
+This works on a device that has never seen the vault before. Your `device_id` lives
+outside the vault, so a restored copy opened on a new machine simply gains one more
+(initially empty) log file for that device. Nothing needs reconciling.
+
+> **Do not restore an old backup over a live vault.** `rclone copy` overwrites, so a
+> stale copy of *this* device's log would discard events newer than the backup. The
+> append-only design protects you from concurrent edits, not from being overwritten
+> by an older file. Restore into an empty directory, check it, then swap.
+
+```bash
+rclone copy remote:pipassword-backup /tmp/vault-check
+pipw --vault /tmp/vault-check list        # does it have what you expect?
+```
+
+### Verifying a backup
+
+Check occasionally rather than assuming. The recovery tool reads a vault directory
+directly and writes nothing, so it can inspect a restored copy without touching your
+live one:
+
+```bash
+pipw recovery-script -o /tmp/recover.py       # if you installed with the script
+python3 /tmp/recover.py /tmp/vault-check | head -20
+rm -rf /tmp/vault-check /tmp/recover.py
+```
+
+Using `recover.py` rather than `pipw` for this is deliberate: it exercises the
+independent read path, so a passing check tells you the backup is readable even
+without this software.
+
 ## Beepy notes
 
 The TUI targets **50 columns × 15 rows**, which is what a 400×240 Sharp Memory LCD
