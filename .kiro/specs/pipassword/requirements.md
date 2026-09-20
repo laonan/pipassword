@@ -49,8 +49,14 @@ Out of scope, and explicitly not claimed:
 **User story:** As a user with several Raspberry Pi boards, I want one tool that
 installs cleanly on all of them without compilation.
 
-1.1. The system SHALL support 64-bit Raspberry Pi OS (aarch64) on Pi Zero 2 W, Pi 4,
-and Pi 5.
+1.1. The system SHALL support Raspberry Pi OS on `aarch64`, `armv7l` and `armv6l`,
+in both 32-bit and 64-bit variants, from Bullseye onward.
+
+**Corrected after production contact.** This originally specified 64-bit only, on the
+basis that the Beepy ran a 64-bit image. It does not: the Beepy's recommended image is
+32-bit Raspberry Pi OS Bullseye on `armv7l` with **Python 3.9.2**. Requiring 64-bit
+would have meant reinstalling the OS and rebuilding the working sharp-drm, fbterm,
+fcitx and Google Pinyin stack, which is a far larger cost than supporting 32-bit.
 
 1.2. No dependency may require compilation from source on a target device. Every
 dependency SHALL resolve to a `manylinux aarch64` wheel or a pure-Python wheel.
@@ -80,7 +86,17 @@ message naming the requirement, rather than failing inside a dependency import.
 1.5. The system SHALL operate with no network access at any point. Network is
 required only by Syncthing, which is a separate process outside this project's scope.
 
-1.6. The system SHALL require Python 3.11 or later.
+1.6. The system SHALL require Python 3.9 or later. Raspberry Pi OS Bullseye ships
+3.9.2, which is what the Beepy runs.
+
+1.6a. Where a newer-Python feature is worth having, it SHALL be applied conditionally
+rather than raising the floor. `dataclass(slots=True)` (3.10+) and `tomllib` (3.11+)
+are handled in `compat.py`.
+
+1.7. Dependencies SHALL be expressed as version ranges, not exact pins. Exact pins
+were tried first and failed on the real target: piwheels caps `cryptography` at
+42.0.8 for `armv7l`, and `prompt_toolkit` 3.0.53 requires Python 3.10. The RFC 8439
+known-answer test is what guards against a bad crypto build, not the pin.
 
 ---
 

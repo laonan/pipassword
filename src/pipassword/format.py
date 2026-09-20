@@ -17,6 +17,8 @@ import struct
 import tempfile
 import uuid
 from dataclasses import dataclass
+
+from .compat import SLOTS
 from pathlib import Path
 
 from .crypto import (
@@ -181,7 +183,7 @@ def _recovery_aad(raw: bytes) -> bytes:
 # ---------------------------------------------------------------------- keyfile
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class Keyfile:
     """A parsed keyfile.
 
@@ -657,7 +659,7 @@ class LogFormatError(FormatError):
 __all__.append("LogFormatError")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class LogHeader:
     vault_uuid: bytes
     device_uuid: bytes
@@ -672,7 +674,7 @@ class LogHeader:
         return str(uuid.UUID(bytes=self.device_uuid))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class LogAnomaly:
     """Something wrong with a frame, reported rather than raised.
 
@@ -688,7 +690,7 @@ class LogAnomaly:
         return f"offset {self.offset}: {self.kind}: {self.detail}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class LogReadResult:
     header: LogHeader
     payloads: list[bytes]

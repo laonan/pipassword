@@ -88,38 +88,59 @@ pipassword_install() {
         warn "skipping platform check because PIPASSWORD_ALLOW_UNSUPPORTED=1"
     else
         [ "$uname_s" = "Linux" ] || die "Linux is required (found $uname_s).
-  pipassword targets 64-bit Raspberry Pi OS. Set
-  PIPASSWORD_ALLOW_UNSUPPORTED=1 to install anyway for development."
+  Set PIPASSWORD_ALLOW_UNSUPPORTED=1 to install anyway for development."
         case "$uname_m" in
-            aarch64|arm64) ;;
-            armv6l|armv7l)
-                die "32-bit ARM is not supported (found $uname_m).
-  The cryptography and argon2 wheels are aarch64 only, so they would have to
-  compile from source on the device. Reinstall with 64-bit Raspberry Pi OS." ;;
+            aarch64|arm64|armv7l) ;;
+            armv6l)
+                warn "$uname_m is single-core and slow. Key derivation may take
+  many seconds; run 'pipw calibrate' before creating a vault." ;;
             *)
-                die "an aarch64 CPU is required (found $uname_m).
-  Set PIPASSWORD_ALLOW_UNSUPPORTED=1 to install anyway for development." ;;
+                die "an ARM CPU is required (found $uname_m).
+  Supported: aarch64, armv7l, armv6l. Set PIPASSWORD_ALLOW_UNSUPPORTED=1 to
+  install anyway for development." ;;
         esac
     fi
 
     local python=""
     local candidate
-    for candidate in python3.13 python3.12 python3.11 python3; do
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
         if command -v "$candidate" >/dev/null 2>&1; then
-            if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
+            if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
                 python="$candidate"
                 break
             fi
         fi
     done
-    [ -n "$python" ] || die "Python 3.11 or later is required.
-  On Raspberry Pi OS Bookworm: sudo apt install python3 python3-venv"
+    [ -n "$python" ] || die "Python 3.9 or later is required.
+  sudo apt install python3 python3-venv"
 
-    "$python" -c 'import venv' 2>/dev/null \
-        || die "the venv module is missing. sudo apt install python3-venv"
+    # ensurepip lives in python3-venv on Debian, and its absence is the single most
+    # common first failure on a fresh Raspberry Pi OS install.
+    "$python" -c 'import venv, ensurepip' 2>/dev/null \
+        || die "the venv module is incomplete. sudo apt install python3-venv"
 
     say "  platform   $uname_s $uname_m"
     say "  python     $("$python" -V 2>&1) at $(command -v "$python")"
+
+    # On 32-bit ARM, piwheels has no argon2-cffi-bindings wheel, so it is compiled.
+    # That is plain C with cffi and needs no Rust, but it does need a toolchain.
+    case "$uname_m" in
+        armv6l|armv7l)
+            # Only check for a C compiler, which is unambiguous. Probing for header
+            # packages is guesswork across Debian multiarch layouts, so the rest is
+            # left to pip, whose failure message names the packages to install.
+            if ! command -v cc >/dev/null 2>&1; then
+                die "32-bit ARM needs a C compiler. argon2-cffi has no prebuilt
+  wheel for this architecture, so it is built from source. It is plain C with
+  cffi, a couple of minutes, and needs no Rust toolchain:
+
+      sudo apt install build-essential python3-dev libffi-dev
+
+  Then re-run this installer."
+            fi
+            say "  note       argon2 compiles from source here (~1-3 min)"
+            say "             needs build-essential python3-dev libffi-dev" ;;
+    esac
 
     # ------------------------------------------------------------------ source
 
@@ -181,14 +202,28 @@ pipassword_install() {
     fi
 
     step "Installing dependencies"
+    case "$uname_m" in
+        armv6l|armv7l)
+            say "  (compiling argon2 on 32-bit ARM; this takes a few minutes)" ;;
+    esac
     # pyproject.toml remains the single source of truth for the pinned dependency
     # set; pip reads it. We are changing the delivery channel, not the manifest.
     "$venv_dir/bin/python" -m pip install --quiet --upgrade pip >/dev/null
-    if ! "$venv_dir/bin/python" -m pip install --quiet "$app_dir.new"; then
+    # piwheels is configured in /etc/pip.conf on Raspberry Pi OS and is what supplies
+    # prebuilt cryptography for 32-bit ARM. Pass it through explicitly so a venv
+    # created with --system-site-packages off still sees it.
+    local pip_args=""
+    case "$uname_m" in
+        armv6l|armv7l) pip_args="--extra-index-url=https://www.piwheels.org/simple" ;;
+    esac
+
+    if ! "$venv_dir/bin/python" -m pip install $pip_args "$app_dir.new"; then
         rm -rf "$app_dir.new"
         die "dependency installation failed.
-  If a wheel was unavailable and a build was attempted, you are probably on
-  32-bit Raspberry Pi OS. pipassword needs the 64-bit image."
+  If the network is the problem, try a mirror:
+      export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+  If a compile failed, install the toolchain:
+      sudo apt install build-essential python3-dev libffi-dev"
     fi
 
     # pip builds in-tree and leaves build/ and *.egg-info behind. Harmless, but the

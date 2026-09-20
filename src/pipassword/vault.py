@@ -31,7 +31,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-import tomllib
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +38,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from . import events as ev
 from . import format as fmt
+from .compat import SLOTS, TomlDecodeError, load_toml
 from .crypto import KdfParams, wipe
 
 __all__ = [
@@ -103,7 +103,7 @@ def default_vault_dir() -> Path:
 # ------------------------------------------------------------ device identity
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class DeviceIdentity:
     uuid: bytes
     name: str
@@ -161,7 +161,7 @@ def _read_device_name(config_dir: Path) -> str | None:
 # -------------------------------------------------------------------- config
 
 
-@dataclass(slots=True)
+@dataclass(**SLOTS)
 class VaultConfig:
     """Non-secret preferences.
 
@@ -180,8 +180,8 @@ class VaultConfig:
         if not path.exists():
             return cls()
         try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+            data = load_toml(path.read_text(encoding="utf-8"))
+        except (TomlDecodeError, UnicodeDecodeError) as exc:
             raise VaultError(f"{path} is not valid TOML: {exc}") from exc
 
         vault = data.get("vault", {})
@@ -214,7 +214,7 @@ class VaultConfig:
         return path
 
 
-@dataclass(slots=True)
+@dataclass(**SLOTS)
 class DeviceState:
     """Per-device, non-synced bookkeeping.
 
@@ -263,7 +263,7 @@ class DeviceState:
 # ------------------------------------------------------------ change summary
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class ChangeSummary:
     """What happened in the vault since this device last opened it."""
 

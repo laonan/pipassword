@@ -20,23 +20,28 @@ import os
 import platform
 import sys
 
-#: Minimum interpreter. Raspberry Pi OS Bookworm ships 3.11, which sets the floor.
-REQUIRED_PYTHON: tuple[int, int] = (3, 11)
+#: Minimum interpreter. The Beepy's recommended image is 32-bit Raspberry Pi OS
+#: Bullseye, which ships Python 3.9.2 -- so 3.9 is the real floor, not 3.11.
+REQUIRED_PYTHON: tuple[int, int] = (3, 9)
 
-#: Only 64-bit ARM Linux is supported (requirement 1.1, 1.3). 32-bit Raspberry Pi OS
-#: and ARMv6 boards are excluded because the required manylinux aarch64 wheels do not
-#: apply to them, which would mean compiling cryptography on a Pi Zero.
 SUPPORTED_SYSTEM = "Linux"
-SUPPORTED_MACHINES = frozenset({"aarch64"})
+
+#: Architectures that work. 32-bit ARM is included: piwheels provides prebuilt
+#: cryptography for armv6l/armv7l, and argon2-cffi-bindings builds from source in a
+#: couple of minutes because it is plain C with cffi and needs no Rust toolchain.
+SUPPORTED_MACHINES = frozenset({"aarch64", "armv7l", "armv6l"})
+
+#: Architectures that work but will be slow. ARMv6 is single-core at ~1 GHz, so
+#: Argon2id at the default 64 MiB will take a while. Worth a warning, not a refusal:
+#: it is the user's device and `pipw calibrate` gives them the real number.
+SLOW_MACHINES = frozenset({"armv6l"})
 
 #: Set to "1" to bypass enforcement. For development on a non-target machine only.
 OVERRIDE_ENV = "PIPASSWORD_ALLOW_UNSUPPORTED"
 
 _DOC_HINT = (
-    "pipassword targets 64-bit Raspberry Pi OS (aarch64) only.\n"
-    "32-bit Raspberry Pi OS and ARMv6 boards (original Pi Zero / Zero W) are\n"
-    "unsupported: the required manylinux aarch64 wheels do not apply, so\n"
-    "cryptography and argon2 would have to compile from source on the device.\n"
+    "pipassword runs on Linux on aarch64, armv7l or armv6l, with Python 3.9 or\n"
+    "later. That covers both 32-bit and 64-bit Raspberry Pi OS from Bullseye on.\n"
     f"For development on another machine, set {OVERRIDE_ENV}=1."
 )
 
@@ -72,10 +77,23 @@ def check_platform(
     if machine not in SUPPORTED_MACHINES:
         expected = ", ".join(sorted(SUPPORTED_MACHINES))
         problems.append(
-            f"An {expected} CPU is required (found {machine or 'unknown'})."
+            f"An ARM Linux CPU is required, one of {expected} "
+            f"(found {machine or 'unknown'})."
         )
 
     return problems
+
+
+def performance_warnings(machine: str | None = None) -> list[str]:
+    """Non-fatal notes about a platform that works but will be slow."""
+    machine = platform.machine() if machine is None else machine
+    if machine in SLOW_MACHINES:
+        return [
+            f"{machine} is single-core and slow. Key derivation at the default "
+            f"64 MiB may take many seconds; run 'pipw calibrate' before creating "
+            f"a vault, since the setting is stored in the keyfile."
+        ]
+    return []
 
 
 def override_active(env: dict[str, str] | None = None) -> bool:

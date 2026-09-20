@@ -33,6 +33,8 @@ import re
 import secrets
 import unicodedata
 from dataclasses import dataclass
+
+from .compat import SLOTS
 from pathlib import Path
 
 from argon2.low_level import Type, hash_secret_raw
@@ -124,7 +126,7 @@ class InsufficientMemoryError(CryptoError):
 # --------------------------------------------------------------------- kdf params
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class KdfParams:
     """Argon2id cost parameters.
 
@@ -369,7 +371,7 @@ def parse_recovery_key(text: str) -> bytes:
 # ------------------------------------------------------------------ memory check
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class MemoryCheck:
     """Outcome of comparing Argon2id's appetite against available memory."""
 

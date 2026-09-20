@@ -25,6 +25,8 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
+
+from .compat import SLOTS
 from typing import Any, Iterable, Mapping
 
 __all__ = [
@@ -128,7 +130,7 @@ def new_record_id() -> str:
     return str(uuid.uuid4())
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class Event:
     """A single change.
 
@@ -150,7 +152,7 @@ class Event:
         return (self.ts, self.device_uuid, self.seq)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class Record:
     """A folded record: the current value of every field."""
 
@@ -200,7 +202,7 @@ class Record:
         return None if value is None else int(value)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class FoldResult:
     records: dict[str, Record]
     deleted: dict[str, int]

@@ -27,6 +27,8 @@ list, and the layout reads fine without them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from .compat import SLOTS
 from typing import Sequence
 
 from .display import display_width, fit, pad, truncate, wrap
@@ -66,7 +68,7 @@ reverse video is unavailable or hard to see on a reflective LCD.
 """
 
 
-@dataclass(slots=True)
+@dataclass(**SLOTS)
 class Screen:
     """Rendered lines plus which of them should be shown in reverse video.
 

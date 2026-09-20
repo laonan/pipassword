@@ -9,25 +9,33 @@ description = "A TUI password vault for Raspberry Pi hardware, including the Bee
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 authors = [{ name = "Laonan", email = "hello@laonan.net" }]
 # Not published to PyPI. install.sh is the delivery mechanism; this file remains
 # the single source of truth for the pinned dependency set, which pip reads during
 # installation, and it is what makes `pip install -e ".[dev]"` work for testing.
 # PyPI-only metadata (trove classifiers, keywords) is therefore omitted.
 
-# Exact pins. This is a personal leaf application, not a library, so
-# reproducible resolution on a low-powered device matters more than flexible
-# co-installation. Every pin below has a verified manylinux aarch64 wheel or is
-# pure Python; nothing here compiles from source on Raspberry Pi OS (req 1.2).
+# Version RANGES, not exact pins. The original exact pins were chosen for
+# reproducibility, and they broke on the actual target: the Beepy's recommended image
+# is 32-bit Raspberry Pi OS Bullseye (armv7l, Python 3.9.2), where piwheels caps
+# cryptography at 42.0.8 and prompt_toolkit 3.0.53 requires >=3.10. Ranges let pip
+# pick what is installable per platform and Python version; the RFC 8439 known-answer
+# test in the suite is what actually guards against a bad crypto build.
+#
+# 32-bit ARM notes:
+#   cryptography          prebuilt by piwheels up to 42.0.8 (newer needs Rust)
+#   argon2-cffi-bindings  no ARM wheel; builds from source in ~1-3 min, plain C
 dependencies = [
-    "cryptography==50.0.1",   # ChaCha20-Poly1305            (aarch64 wheel)
-    "argon2-cffi==25.1.0",    # Argon2id, parallelism=4      (aarch64 wheel)
-    "prompt_toolkit==3.0.53", # TUI                          (pure Python)
-    "wcwidth==0.8.4",         # CJK-correct display width    (pure Python)
-    "pypinyin==0.55.0",       # write-time index only        (pure Python)
-    "pyotp==2.10.0",          # TOTP                         (pure Python)
+    "cryptography>=42.0.8,<51",     # ChaCha20-Poly1305
+    "argon2-cffi>=25.1.0,<27",      # Argon2id, parallelism=4
+    "prompt_toolkit>=3.0.52,<3.1",  # TUI
+    "wcwidth>=0.2.13",              # CJK-correct display width
+    "pypinyin>=0.53",               # write-time index only
+    "pyotp>=2.9",                   # TOTP
+    "tomli>=2.0.1; python_version < '3.11'",  # tomllib backport for 3.9/3.10
 ]
+
 # Event payloads use stdlib `json`, not CBOR. Every field is text, so a binary
 # encoding buys nothing measurable at the 10k-record target, and one fewer
 # dependency is worth more in a password manager.

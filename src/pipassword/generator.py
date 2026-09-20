@@ -25,6 +25,8 @@ import secrets
 import string
 from dataclasses import dataclass
 
+from .compat import SLOTS
+
 __all__ = [
     "GeneratorError",
     "Alphabet",
@@ -50,7 +52,7 @@ class GeneratorError(Exception):
     pass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class Alphabet:
     name: str
     characters: str

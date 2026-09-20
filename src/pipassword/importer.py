@@ -38,6 +38,8 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
+
+from .compat import SLOTS
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -93,7 +95,7 @@ def contains_cjk(text: str) -> bool:
     return bool(_CJK.search(text or ""))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class LegacyRecord:
     """One decrypted legacy row."""
 

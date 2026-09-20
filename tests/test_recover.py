@@ -80,9 +80,12 @@ class TestIndependence:
             "recover.py must not import the package it is meant to outlive"
         )
         allowed_third_party = {"cryptography", "argon2"}
-        stdlib = set(sys.stdlib_module_names)
-        unexpected = imported - stdlib - allowed_third_party
-        assert not unexpected, f"unexpected dependencies: {sorted(unexpected)}"
+        # sys.stdlib_module_names is 3.10+; on 3.9 the pipassword assertion above is
+        # still the one that matters, so the stdlib sweep is simply skipped.
+        stdlib = set(getattr(sys, "stdlib_module_names", ()))
+        if stdlib:
+            unexpected = imported - stdlib - allowed_third_party
+            assert not unexpected, f"unexpected dependencies: {sorted(unexpected)}"
 
     def test_runs_with_the_package_import_blocked(self, populated):
         """Simulate the package being uninstalled or broken at runtime.

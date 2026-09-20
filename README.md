@@ -41,12 +41,30 @@ format is specified in [`FORMAT.md`](FORMAT.md).
 
 ## Requirements
 
-- **64-bit Raspberry Pi OS (aarch64)**, Python 3.11 or later
-- 32-bit Raspberry Pi OS and ARMv6 boards (original Pi Zero / Zero W) are **not
-  supported**: the required `manylinux aarch64` wheels do not apply, so
-  `cryptography` and `argon2` would have to compile from source on the device
+Linux on ARM with **Python 3.9 or later**. Both 32-bit and 64-bit Raspberry Pi OS
+work, from Bullseye onward.
 
-Every dependency installs from a wheel. Nothing compiles on the Pi.
+| Platform | Status |
+|---|---|
+| 64-bit Raspberry Pi OS (aarch64) | everything installs from a wheel |
+| 32-bit Raspberry Pi OS (armv7l) | `argon2-cffi` compiles from source, ~1-3 min |
+| armv6l (original Pi Zero / Zero W) | works, but slow; warned about |
+
+The Beepy's recommended image is **32-bit Bullseye with Python 3.9**, so that is a
+first-class target rather than an afterthought.
+
+On 32-bit ARM you need a C toolchain first, because piwheels has no
+`argon2-cffi-bindings` wheel for that architecture:
+
+```bash
+sudo apt install python3-venv build-essential python3-dev libffi-dev
+```
+
+That build is plain C with cffi and needs **no Rust**. `cryptography` is the
+dependency that needs Rust, and [piwheels](https://www.piwheels.org/) already
+provides it prebuilt for 32-bit ARM, which is why the dependency floor is
+`cryptography>=42.0.8` rather than an exact pin — 42.0.8 is the newest piwheels
+builds for `armv7l`.
 
 ## Install
 
@@ -520,6 +538,16 @@ The package targets aarch64 Linux, but the test suite runs anywhere:
 python3.11 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest
+```
+
+The suite is expected to pass on **3.9 as well as 3.11+**, because the Beepy runs
+3.9.2. Two shims in `compat.py` make that work: `dataclass(slots=True)` is 3.10+, so
+it is applied conditionally, and `tomllib` is 3.11+, so `tomli` is a conditional
+dependency below that. If you touch either, check both versions:
+
+```bash
+python3.9 -m venv /tmp/v39 && /tmp/v39/bin/pip install -e ".[dev]"
+PYTHONPATH=src /tmp/v39/bin/pytest
 ```
 
 `pyproject.toml` is kept as the dependency manifest and the development entry point,

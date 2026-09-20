@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+from .compat import SLOTS
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import events as ev
@@ -50,7 +52,7 @@ class TotpError(Exception):
     """A TOTP secret could not be parsed or used."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class TotpSecret:
     secret: str
     digits: int = DEFAULT_DIGITS
@@ -60,7 +62,7 @@ class TotpSecret:
     issuer: str = ""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, **SLOTS)
 class TotpCode:
     """Either a code, or an explanation of why there is not one."""
 

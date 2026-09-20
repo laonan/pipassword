@@ -8,6 +8,9 @@ from pipassword import platform_guard as guard
 
 SUPPORTED = {"system": "Linux", "machine": "aarch64", "python_version": (3, 11)}
 
+#: The Beepy's recommended image: 32-bit Raspberry Pi OS Bullseye.
+BEEPY = {"system": "Linux", "machine": "armv7l", "python_version": (3, 9)}
+
 
 def test_supported_target_has_no_problems():
     assert guard.check_platform(**SUPPORTED) == []
@@ -18,9 +21,14 @@ def test_newer_python_still_supported():
 
 
 def test_old_python_rejected():
-    problems = guard.check_platform(**{**SUPPORTED, "python_version": (3, 10)})
+    problems = guard.check_platform(**{**SUPPORTED, "python_version": (3, 8)})
     assert len(problems) == 1
-    assert "3.11" in problems[0]
+    assert "3.9" in problems[0]
+
+
+def test_python_39_is_supported():
+    """Raspberry Pi OS Bullseye ships 3.9.2, and that is what the Beepy runs."""
+    assert guard.check_platform(**{**SUPPORTED, "python_version": (3, 9)}) == []
 
 
 def test_macos_rejected():
@@ -32,13 +40,40 @@ def test_macos_rejected():
     assert any("aarch64" in p for p in problems)
 
 
-@pytest.mark.parametrize("machine", ["armv6l", "armv7l", "x86_64", "i686"])
-def test_non_aarch64_rejected(machine):
-    """32-bit Raspberry Pi OS and ARMv6 boards have no usable wheels."""
+@pytest.mark.parametrize("machine", ["aarch64", "armv7l", "armv6l"])
+def test_arm_architectures_are_supported(machine):
+    """32-bit ARM works: piwheels prebuilds cryptography, and argon2-cffi-bindings
+    is plain C with cffi so it builds from source without a Rust toolchain."""
+    assert (
+        guard.check_platform(
+            system="Linux", machine=machine, python_version=(3, 9)
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("machine", ["x86_64", "i686", "riscv64"])
+def test_non_arm_rejected(machine):
     problems = guard.check_platform(
         system="Linux", machine=machine, python_version=(3, 11)
     )
-    assert any("aarch64" in p for p in problems)
+    assert any("ARM" in p for p in problems)
+
+
+def test_beepy_configuration_is_accepted():
+    """The exact platform in production: armv7l, Bullseye, Python 3.9.2."""
+    assert guard.check_platform(**BEEPY) == []
+    assert guard.enforce(env={}, **BEEPY) is None
+
+
+def test_armv6_warns_about_speed_without_refusing():
+    assert guard.performance_warnings("armv6l"), "ARMv6 should warn"
+    assert "calibrate" in guard.performance_warnings("armv6l")[0]
+
+
+@pytest.mark.parametrize("machine", ["aarch64", "armv7l"])
+def test_faster_architectures_do_not_warn(machine):
+    assert guard.performance_warnings(machine) == []
 
 
 def test_enforce_is_silent_on_supported_target(capsys):
@@ -57,6 +92,7 @@ def test_enforce_exits_with_status_1_and_explains(capsys):
     assert "unsupported platform" in err
     # Requirement 1.4: the message must name the requirement, not just fail.
     assert "aarch64" in err
+    assert "armv7l" in err  # must not tell a 32-bit user to reinstall their OS
     assert guard.OVERRIDE_ENV in err
 
 
