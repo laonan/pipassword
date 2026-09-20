@@ -118,13 +118,13 @@ class DeviceIdentity:
 
     @classmethod
     def load_or_create(
-        cls, config_dir: Path | None = None, *, name: str | None = None
+        cls, config_dir: Path | str | None = None, *, name: str | None = None
     ) -> DeviceIdentity:
         """Read this device's identity, generating it on first run.
 
         Stored outside the vault directory on purpose; see the module docstring.
         """
-        config_dir = default_config_dir() if config_dir is None else config_dir
+        config_dir = default_config_dir() if config_dir is None else Path(config_dir)
         fmt.ensure_dir(config_dir)
         id_path = config_dir / "device_id"
 
@@ -194,7 +194,7 @@ class VaultConfig:
         )
 
     def save(self, config_dir: Path | None = None) -> Path:
-        config_dir = default_config_dir() if config_dir is None else config_dir
+        config_dir = default_config_dir() if config_dir is None else Path(config_dir)
         fmt.ensure_dir(config_dir)
         path = config_dir / "config.toml"
 
@@ -333,11 +333,11 @@ class Vault:
     @classmethod
     def create(
         cls,
-        vault_dir: Path,
+        vault_dir: Path | str,
         password: str | bytes,
         *,
         params: KdfParams | None = None,
-        config_dir: Path | None = None,
+        config_dir: Path | str | None = None,
         device_name: str | None = None,
         check_memory: bool = True,
     ) -> tuple[Vault, bytes]:
@@ -347,7 +347,8 @@ class Vault:
         to the user exactly once, and it is never written anywhere by us
         (requirement 6.1).
         """
-        config_dir = default_config_dir() if config_dir is None else config_dir
+        vault_dir = Path(vault_dir)
+        config_dir = default_config_dir() if config_dir is None else Path(config_dir)
         if fmt.find_keyfile_generations(vault_dir):
             raise VaultError(
                 f"{vault_dir} already contains a keyfile; refusing to overwrite it"
@@ -374,11 +375,11 @@ class Vault:
     @classmethod
     def unlock(
         cls,
-        vault_dir: Path,
+        vault_dir: Path | str,
         *,
         password: str | bytes | None = None,
         recovery_key: bytes | None = None,
-        config_dir: Path | None = None,
+        config_dir: Path | str | None = None,
         device_name: str | None = None,
         check_memory: bool = True,
     ) -> Vault:
@@ -386,7 +387,8 @@ class Vault:
         if (password is None) == (recovery_key is None):
             raise VaultError("supply exactly one of password or recovery_key")
 
-        config_dir = default_config_dir() if config_dir is None else config_dir
+        vault_dir = Path(vault_dir)
+        config_dir = default_config_dir() if config_dir is None else Path(config_dir)
         keyfile = fmt.load_keyfile(vault_dir)
         if password is not None:
             dek = keyfile.unwrap_with_password(password, check_memory=check_memory)
@@ -667,6 +669,24 @@ class Vault:
         )
         self._state.save(self.config_dir)
 
+    def _index_for(
+        self,
+        fields: Mapping[str, Any],
+        explicit: Mapping[str, str] | None,
+    ) -> dict[str, str]:
+        """Build the Pinyin search index for an event being written.
+
+        Imported here rather than at module scope so that reading a vault never
+        pulls in pypinyin and its multi-megabyte tables (requirement 4.14). An
+        explicit index always wins, which keeps tests and the importer able to
+        control it exactly.
+        """
+        if explicit is not None:
+            return dict(explicit)
+        from . import pinyin as pinyin_module
+
+        return pinyin_module.build_index(fields)
+
     def add(
         self,
         name: str,
@@ -717,7 +737,7 @@ class Vault:
                     ts=ts,
                     seq=seq,
                     device_uuid=self.device.uuid,
-                    pinyin=dict(pinyin or {}),
+                    pinyin=self._index_for(fields, pinyin),
                 )
             ]
         )
@@ -753,7 +773,7 @@ class Vault:
                     ts=ts,
                     seq=seq,
                     device_uuid=self.device.uuid,
-                    pinyin=dict(spec.get("pinyin") or {}),
+                    pinyin=self._index_for(fields, spec.get("pinyin")),
                 )
             )
         self._commit(new_events)
@@ -788,6 +808,7 @@ class Vault:
         if not delta and not pinyin:
             return record
 
+        merged = {**record.fields, **delta}
         ts, seq = self._next_ts_and_seq()
         self._commit(
             [
@@ -797,7 +818,7 @@ class Vault:
                     ts=ts,
                     seq=seq,
                     device_uuid=self.device.uuid,
-                    pinyin=dict(pinyin or {}),
+                    pinyin=self._index_for(merged, pinyin),
                 )
             ]
         )

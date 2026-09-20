@@ -554,6 +554,104 @@ def cmd_calibrate(args: argparse.Namespace, console: Console) -> int:
     return 0
 
 
+def cmd_gen(args: argparse.Namespace, console: Console) -> int:
+    from . import generator
+
+    try:
+        for _ in range(max(1, args.count)):
+            if args.passphrase:
+                console.out(generator.generate_passphrase(words=args.words))
+            else:
+                console.out(
+                    generator.generate(
+                        length=args.length,
+                        thumb=args.thumb,
+                        digits=args.digits,
+                        symbols=args.symbols,
+                        allow_ambiguous=args.allow_ambiguous,
+                    )
+                )
+    except generator.GeneratorError as exc:
+        console.err(f"error: {exc}")
+        return 1
+
+    if args.passphrase:
+        bits = generator.entropy_bits(len(generator.WORDS), args.words)
+        console.err(f"~{bits:.0f} bits. Use this for the master password.")
+    else:
+        alphabet = generator.build_alphabet(
+            thumb=args.thumb,
+            digits=args.digits,
+            symbols=args.symbols,
+            allow_ambiguous=args.allow_ambiguous,
+        )
+        bits = generator.entropy_bits(len(alphabet), args.length)
+        console.err(
+            f"~{bits:.0f} bits from a {len(alphabet)}-character alphabet "
+            f"({alphabet.name} mode)."
+        )
+    return 0
+
+
+def _parse_at(value: str) -> int:
+    """Parse a manual time override into microseconds since the epoch.
+
+    Accepts a full timestamp or just a time of day, because the realistic case is
+    reading the clock off a watch while the Pi thinks it is last Tuesday. A bare
+    time is interpreted as today by the local calendar, which is the intent when
+    someone types ``--at 14:30``.
+    """
+    import datetime
+
+    text = value.strip()
+    for fmt_string in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%H:%M:%S", "%H:%M"):
+        try:
+            parsed = datetime.datetime.strptime(text, fmt_string)
+        except ValueError:
+            continue
+        if fmt_string.startswith("%H"):
+            today = datetime.date.today()
+            parsed = parsed.replace(
+                year=today.year, month=today.month, day=today.day
+            )
+        return int(parsed.timestamp() * 1_000_000)
+    raise VaultError(
+        f"could not understand --at {value!r}. Use 'YYYY-MM-DD HH:MM' or 'HH:MM'."
+    )
+
+
+def cmd_totp(args: argparse.Namespace, console: Console) -> int:
+    from . import totp as totp_module
+
+    at_micros = _parse_at(args.at) if args.at else None
+
+    with open_vault(args, console) as vault:
+        record = _resolve_one(vault, args.query, console)
+        if record is None:
+            return 1
+        if not record.totp:
+            console.err(f"{record.name!r} has no TOTP secret stored.")
+            return 1
+
+        try:
+            result = totp_module.generate(
+                record.totp,
+                last_known_good_time=vault.last_known_good_time,
+                at_micros=at_micros,
+            )
+        except totp_module.TotpError as exc:
+            console.err(f"error: {exc}")
+            return 1
+
+        if not result.available:
+            console.err(f"error: {result.blocked_reason}")
+            return 1
+
+        console.out(result.code or "")
+        console.err(f"valid for {result.seconds_remaining}s")
+    return 0
+
+
 def _run_import(
     args: argparse.Namespace,
     console: Console,
@@ -769,6 +867,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--parallelism", type=int, default=4)
     p_cal.add_argument("--runs", type=int, default=3)
     p_cal.set_defaults(func=cmd_calibrate)
+
+    p_gen = sub.add_parser("gen", help="generate a password or passphrase")
+    p_gen.add_argument("-n", "--length", type=int, default=20)
+    p_gen.add_argument(
+        "-t",
+        "--thumb",
+        action="store_true",
+        help="omit symbols, which need a modifier layer on the BBQ20 keyboard",
+    )
+    p_gen.add_argument("--no-digits", dest="digits", action="store_false")
+    p_gen.add_argument("--no-symbols", dest="symbols", action="store_false")
+    p_gen.add_argument("--allow-ambiguous", action="store_true")
+    p_gen.add_argument(
+        "-p",
+        "--passphrase",
+        action="store_true",
+        help="generate a word sequence, suitable for the master password",
+    )
+    p_gen.add_argument("-w", "--words", type=int, default=6)
+    p_gen.add_argument("-c", "--count", type=int, default=1)
+    p_gen.set_defaults(func=cmd_gen)
+
+    p_totp = sub.add_parser("totp", help="show a TOTP code")
+    p_totp.add_argument("query")
+    p_totp.add_argument(
+        "--at",
+        help='current time if the clock is wrong, e.g. "2026-09-20 14:30" or "14:30"',
+    )
+    p_totp.add_argument("--recovery-key", action="store_true")
+    p_totp.set_defaults(func=cmd_totp)
 
     p_imp = sub.add_parser(
         "import-legacy",

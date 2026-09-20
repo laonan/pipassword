@@ -107,7 +107,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test with a fixture legacy DB; assert legacy file mtime and content hash unchanged
   - _Requirements: 5.1–5.10_
 
-- [ ] 11. Pinyin index (`pinyin.py`)
+- [x] 11. Pinyin index (`pinyin.py`)
   - Build initials and full Pinyin per CJK field at write time; store in the event `p`
     map inside the encrypted frame
   - Search matches the union of raw text and index, case-folded
@@ -115,7 +115,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
     on the read path
   - _Requirements: 4.12, 4.13, 4.14_
 
-- [ ] 12. TOTP (`totp.py`)
+- [x] 12. TOTP (`totp.py`)
   - Store secret / `otpauth://` URI as a record field, unconditionally
   - Generate via `pyotp`, entirely offline
   - Clock gate: refuse and explain when `now < last_known_good_time`; offer to set time
@@ -123,7 +123,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test: a backwards clock blocks display rather than emitting a wrong code
   - _Requirements: 7.1, 7.2, 7.4, 7.5, 7.6_
 
-- [ ] 13. Password generator
+- [x] 13. Password generator
   - Configurable length and character classes
   - "Thumb-typable" mode excluding characters behind the BBQ20 symbol layer
   - Uses `secrets`
