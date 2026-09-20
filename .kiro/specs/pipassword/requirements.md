@@ -52,8 +52,23 @@ installs cleanly on all of them without compilation.
 1.1. The system SHALL support 64-bit Raspberry Pi OS (aarch64) on Pi Zero 2 W, Pi 4,
 and Pi 5.
 
-1.2. The system SHALL install from PyPI wheels only. No dependency may require
-compilation from source on a target device.
+1.2. No dependency may require compilation from source on a target device. Every
+dependency SHALL resolve to a `manylinux aarch64` wheel or a pure-Python wheel.
+
+1.2a. The system SHALL be delivered by a `curl | bash` installer, not published to
+PyPI. It is a personal tool for one person's devices, and a shell installer keeps the
+door open for non-Python components later without changing how it is installed.
+
+1.2b. The installer SHALL be safe against a truncated download. All logic SHALL live
+in a function invoked on the final line, so an incomplete transfer cannot execute a
+partial installer.
+
+1.2c. The installer SHALL require no root, SHALL verify the platform before writing
+anything, and SHALL NOT place the application inside the vault directory, which is
+the directory the user shares with Syncthing.
+
+1.2d. The installer SHALL provide an uninstall path that removes the application and
+leaves the vault untouched.
 
 1.3. The system SHALL NOT support macOS, Windows, or 32-bit ARM. 32-bit Raspberry Pi
 OS and ARMv6 boards (original Pi Zero / Zero W) are unsupported because the required

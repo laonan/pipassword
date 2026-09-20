@@ -781,6 +781,130 @@ def cmd_import_json(args: argparse.Namespace, console: Console) -> int:
     return _run_import(args, console, records, failures, str(path))
 
 
+def cmd_benchmark(args: argparse.Namespace, console: Console) -> int:
+    """Measure the post-unlock hot path on this device.
+
+    Exists so the question "is Python fast enough on a Pi Zero 2 W" is answered by
+    measurement rather than by extrapolating from a laptop. Requirement 3.14 budgets
+    3 seconds for unlock excluding key derivation.
+
+    Uses a throwaway vault in a temporary directory; your real vault is never opened.
+    """
+    import shutil
+    import tempfile
+    import time
+
+    from . import events as ev
+    from . import format as fmt
+
+    count = max(100, args.records)
+    workdir = Path(tempfile.mkdtemp(prefix="pipw-bench-"))
+    cheap = crypto.KdfParams(time_cost=1, memory_cost_kib=1024, parallelism=1)
+
+    try:
+        console.err(f"Building a throwaway vault with {count} records...")
+        vault, _ = Vault.create(
+            workdir / "vault",
+            "benchmark",
+            params=cheap,
+            config_dir=workdir / "config",
+            check_memory=False,
+        )
+        specs = [
+            {
+                "name": f"entry {i:05d}",
+                "login": f"user{i}@example.com",
+                "password": f"pw-{i}-0123456789abcdef",
+                "url": f"https://example.com/{i}",
+                "memo": "a couple of lines of notes about this entry",
+            }
+            for i in range(count)
+        ]
+
+        started = time.perf_counter()
+        vault.add_many(specs)
+        write_s = time.perf_counter() - started
+
+        log = vault.own_log
+        dek = vault.dek
+        log_bytes = log.stat().st_size
+        vault.close()
+
+        started = time.perf_counter()
+        result = fmt.read_log(log, dek)
+        decrypt_s = time.perf_counter() - started
+
+        device = result.header.device_uuid
+        started = time.perf_counter()
+        parsed = [ev.decode_event(p, device) for p in result.payloads]
+        decode_s = time.perf_counter() - started
+
+        started = time.perf_counter()
+        folded = ev.fold(parsed)
+        fold_s = time.perf_counter() - started
+
+        state = ev.fold(parsed)
+        started = time.perf_counter()
+        matches = [
+            r
+            for r in state.records.values()
+            if "entry 001" in r.name.casefold()
+        ]
+        search_s = time.perf_counter() - started
+
+        total_s = decrypt_s + decode_s + fold_s
+
+        console.out(f"records            {len(folded.records)}")
+        console.out(f"log size           {log_bytes / 1e6:.2f} MB")
+        console.out("")
+        console.out(f"write (all)        {write_s * 1000:8.1f} ms")
+        console.out("")
+        console.out("post-unlock hot path:")
+        console.out(
+            f"  decrypt frames   {decrypt_s * 1000:8.1f} ms   "
+            f"({decrypt_s / total_s * 100:4.1f}%)  AEAD in C, loop in Python"
+        )
+        console.out(
+            f"  decode events    {decode_s * 1000:8.1f} ms   "
+            f"({decode_s / total_s * 100:4.1f}%)  json in C, validation in Python"
+        )
+        console.out(
+            f"  fold             {fold_s * 1000:8.1f} ms   "
+            f"({fold_s / total_s * 100:4.1f}%)  pure Python"
+        )
+        console.out(f"  {'-' * 44}")
+        console.out(f"  total            {total_s * 1000:8.1f} ms")
+        console.out("")
+        console.out(f"search {len(matches)} of {count}    {search_s * 1000:8.1f} ms")
+
+        console.err("")
+        budget = 3.0
+        if total_s <= budget / 3:
+            console.err(
+                f"Comfortably inside the {budget:.0f}s unlock budget. Native code "
+                f"would not buy you anything you would notice."
+            )
+        elif total_s <= budget:
+            console.err(
+                f"Inside the {budget:.0f}s unlock budget, with margin to spare "
+                f"shrinking. Log compaction is the cheaper lever than native code: "
+                f"it would collapse these {count} frames into one."
+            )
+        else:
+            console.err(
+                f"Over the {budget:.0f}s unlock budget. Implement log compaction "
+                f"first: it removes this work entirely rather than making it faster, "
+                f"and stays in Python. Only reach for C if that is not enough."
+            )
+        console.err(
+            "Add key derivation on top of this: run 'pipw calibrate' for that half."
+        )
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    return 0
+
+
 def cmd_recovery_script(args: argparse.Namespace, console: Console) -> int:
     """Write out the standalone recovery tool.
 
@@ -976,6 +1100,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_json.add_argument("path")
     p_json.add_argument("--dry-run", action="store_true")
     p_json.set_defaults(func=cmd_import_json)
+
+    p_bench = sub.add_parser(
+        "benchmark",
+        help="measure the post-unlock hot path on this device (uses a temp vault)",
+    )
+    p_bench.add_argument(
+        "-n", "--records", type=int, default=10000, help="how many records to build"
+    )
+    p_bench.set_defaults(func=cmd_benchmark)
 
     p_rec = sub.add_parser(
         "recovery-script",

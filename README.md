@@ -51,12 +51,67 @@ Every dependency installs from a wheel. Nothing compiles on the Pi.
 ## Install
 
 ```bash
-sudo apt install pipx
-pipx install pipassword
+curl -fsSL https://raw.githubusercontent.com/laonan/pipassword/main/install.sh | bash
 ```
 
-`pipx` isolates the dependencies from system Python, so the
-`break-system-packages` workaround minipassword needed is no longer required.
+Reading it first costs nothing, and for something that holds your passwords that
+seems like a fair trade:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laonan/pipassword/main/install.sh -o install.sh
+less install.sh && bash install.sh
+```
+
+Pin to a tag rather than tracking `main`:
+
+```bash
+curl -fsSL .../install.sh | PIPASSWORD_REF=v0.1.0 bash
+```
+
+The installer needs no root and writes to three places:
+
+```
+~/.local/lib/pipassword/app     the source tree, including tests
+~/.local/lib/pipassword/venv    a private virtualenv with the pinned dependencies
+~/.local/bin/pipw               launcher
+```
+
+Your vault lives separately at `~/.local/share/pipassword/vault` and the installer
+never touches it. That separation matters: you point Syncthing at the vault
+directory, and the application must not be inside it.
+
+| Variable | Effect |
+|---|---|
+| `PIPASSWORD_REF` | git ref to install (default `main`) |
+| `PIPASSWORD_SOURCE` | install from a local checkout instead of downloading |
+| `PIPASSWORD_PREFIX` | install prefix (default `~/.local`) |
+| `PIPASSWORD_ALLOW_UNSUPPORTED` | skip the aarch64 check, for development |
+
+Re-run the installer to update. `pipw-uninstall` removes the application and leaves
+the vault alone.
+
+### On piping a script into bash
+
+This is not published to PyPI, so `curl | bash` replaces `pipx install`. Worth being
+clear about what that does and does not change.
+
+It is the same trust model as installing from a package index — you are executing
+code fetched over HTTPS — except the source is a repository you control, which is
+arguably better. What it loses is a signature and a version resolver.
+
+Two mitigations are built in:
+
+- **The whole script is one function, invoked on the final line.** If the transfer is
+  cut off mid-download, bash executes whatever arrived. Without the wrapper, a
+  truncated file could run half an installer; with it, an incomplete download simply
+  never calls `main`.
+- **The platform is checked before anything is written.** On 32-bit Raspberry Pi OS
+  it refuses with an explanation rather than starting a source build that would take
+  an hour and then fail.
+
+What it does not give you is integrity verification. Pin `PIPASSWORD_REF` to a tag
+and the content is at least stable; if you want more, clone the repository and run
+`bash install.sh` from the checkout.
 
 ## Quick start
 
@@ -88,6 +143,7 @@ pipw passwd                 change the master password
 pipw calibrate              measure unlock time on this device
 pipw import-legacy [--dry-run]
 pipw import-json PATH [--dry-run]
+pipw benchmark [-n 10000]   measure the unlock hot path on this device
 pipw recovery-script -o recover.py      write out the standalone recovery tool
 pipw where                  show vault and config paths
 ```
@@ -307,6 +363,53 @@ perhaps 10–20 bits of work factor. **Your passphrase entropy is what actually 
 the security.** Use `pipw gen -p`; six words is about 59 bits, and a word sequence is
 far easier to thumb-type than a short symbol-heavy string.
 
+## Performance, and whether to reach for C
+
+Measured, not assumed. `pipw benchmark` builds a throwaway vault and times the
+post-unlock hot path; your real vault is never opened.
+
+On an M-series Mac with 10,000 records:
+
+```
+  decrypt frames       32.0 ms   (41.7%)  AEAD in C, loop in Python
+  decode events        27.4 ms   (35.6%)  json in C, validation in Python
+  fold                 17.4 ms   (22.7%)  pure Python
+  total                76.8 ms
+```
+
+Two things follow from that shape.
+
+**The expensive primitives are already C.** Argon2id comes from `argon2-cffi`,
+ChaCha20-Poly1305 from `cryptography`, and JSON parsing from CPython's C scanner.
+What is left in Python is loop overhead and dictionary work. Rewriting the vault in C
+would target the 77 ms, not the parts that actually cost time.
+
+**Key derivation dominates anyway.** At the default 64 MiB it is ~30 ms here and
+plausibly ~1 s on a Pi Zero 2 W — likely more than the entire rest of unlock. Run
+`pipw calibrate` for that half.
+
+So before writing any C, the order of leverage is:
+
+1. **Log compaction** (listed as deferred in the task plan). Collapsing N events into
+   one snapshot frame removes this work rather than speeding it up: unlock would
+   decrypt one frame instead of ten thousand. Pure Python, and the `seq` and coverage
+   fields it needs are already specified.
+2. **Lower `time_cost`** if `calibrate` says derivation is the bottleneck. This is a
+   real security trade, so make it deliberately.
+3. **Then** consider a native accelerator.
+
+If it does come to that, the boundary is already clean. The two hot functions are
+`format.read_log` and `events.fold`, both of which take bytes and return plain data
+structures with no vault state involved. [`FORMAT.md`](FORMAT.md) specifies the
+on-disk format independently of any language, so a native implementation needs no
+format change and `recover.py` stays as the pure-Python fallback that must always
+work. Measure on the Beepy first:
+
+```bash
+pipw benchmark -n 10000
+pipw calibrate
+```
+
 ## Security summary
 
 In scope and defended:
@@ -336,6 +439,16 @@ The package targets aarch64 Linux, but the test suite runs anywhere:
 python3.11 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest
+```
+
+`pyproject.toml` is kept as the dependency manifest and the development entry point,
+not as a PyPI package — `install.sh` reads the pins through pip. The tests also ship
+with the installed application, so you can verify on the device itself:
+
+```bash
+cd ~/.local/lib/pipassword/app
+~/.local/lib/pipassword/venv/bin/python -m pip install pytest
+~/.local/lib/pipassword/venv/bin/python -m pytest
 ```
 
 The platform guard runs only at the CLI entry point, never on import, so tests and

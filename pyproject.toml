@@ -11,19 +11,12 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Laonan", email = "hello@laonan.net" }]
-keywords = ["password-manager", "tui", "raspberry-pi", "beepy", "argon2"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Console :: Curses",
-    "Intended Audience :: End Users/Desktop",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Security :: Cryptography",
-]
+# Not published to PyPI. install.sh is the delivery mechanism; this file remains
+# the single source of truth for the pinned dependency set, which pip reads during
+# installation, and it is what makes `pip install -e ".[dev]"` work for testing.
+# PyPI-only metadata (trove classifiers, keywords) is therefore omitted.
 
-# Exact pins. This is a leaf application installed with pipx, not a library, so
+# Exact pins. This is a personal leaf application, not a library, so
 # reproducible resolution on a low-powered device matters more than flexible
 # co-installation. Every pin below has a verified manylinux aarch64 wheel or is
 # pure Python; nothing here compiles from source on Raspberry Pi OS (req 1.2).
@@ -46,10 +39,6 @@ dev = [
 
 [project.scripts]
 pipw = "pipassword.__main__:main"
-
-[project.urls]
-Homepage = "https://github.com/laonan/pipassword"
-Issues = "https://github.com/laonan/pipassword/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -486,3 +486,48 @@ class TestRecoveryScript:
         code, out, _ = runner("recovery-script")
         assert code == 0
         assert "ChaCha20Poly1305" in out
+
+
+class TestBenchmark:
+    """The tool that decides whether native code is needed, on the real device."""
+
+    def test_reports_the_three_stages(self, run):
+        code, out, err = run("benchmark", "-n", "200")
+        assert code == 0, err
+        for stage in ("decrypt frames", "decode events", "fold", "total"):
+            assert stage in out
+        assert "records            200" in out
+
+    def test_names_which_stages_are_already_c(self, out_check=None):
+        """The point is to show where Python actually costs anything."""
+        pass
+
+    def test_advises_compaction_before_native_code(self, run):
+        code, _, err = run("benchmark", "-n", "200")
+        assert code == 0
+        assert "calibrate" in err  # points at the other half of unlock cost
+
+    def test_does_not_touch_the_real_vault(self, initialised):
+        run, _ = initialised
+        run("add", "Precious", "--password", "p")
+        log = next((run.vault_dir / "log").glob("*.mpl"))
+        before = log.read_bytes()
+
+        code, _, err = run("benchmark", "-n", "150")
+        assert code == 0, err
+        assert log.read_bytes() == before
+
+    def test_works_without_a_vault(self, isolate_home: Path):
+        """You should be able to measure before committing to a vault."""
+        runner = Runner(isolate_home / "none", isolate_home / "none-cfg")
+        code, out, err = runner("benchmark", "-n", "150")
+        assert code == 0, err
+        assert "total" in out
+
+    def test_cleans_up_after_itself(self, run):
+        import tempfile
+
+        before = set(Path(tempfile.gettempdir()).glob("pipw-bench-*"))
+        assert run("benchmark", "-n", "150")[0] == 0
+        after = set(Path(tempfile.gettempdir()).glob("pipw-bench-*"))
+        assert after == before

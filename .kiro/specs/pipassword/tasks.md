@@ -153,8 +153,12 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - _Requirements: 4.9_
 
 - [x] 17. Packaging and documentation
-  - `pipx install pipassword` as the documented path; drop the legacy
-    `break-system-packages` advice
+  - `curl | bash` installer as the documented path; not published to PyPI.
+    `pyproject.toml` is retained as the dependency manifest that pip reads during
+    installation, and as the development entry point. The legacy
+    `break-system-packages` advice is dropped
+  - `pipw benchmark` measures the post-unlock hot path on the real device, so the
+    question of native code is settled by measurement
   - README: Syncthing setup (share the directory, staggered versioning, `.stignore`,
     do not use untrusted-device encryption), 64-bit Raspberry Pi OS requirement,
     Beepy fbterm/fcitx notes, recovery key handling, migration walkthrough
