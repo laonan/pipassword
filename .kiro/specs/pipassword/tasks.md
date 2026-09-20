@@ -129,7 +129,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Uses `secrets`
   - _Requirements: 4.16_
 
-- [ ] 14. TUI core (`tui.py`)
+- [x] 14. TUI core (`tui.py`)
   - `prompt_toolkit` full-screen app; list view per design §6.1 at 50×15
   - Repaint on input events only. No timers, no animation, no periodic refresh
   - All width via `wcwidth`; never `len()`
@@ -140,7 +140,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Test at 50×15 with CJK entries: no wrapping, no overflow
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8_
 
-- [ ] 15. TUI detail, edit, and reveal
+- [x] 15. TUI detail, edit, and reveal
   - Detail view per §6.1; password masked by default
   - `p` reveals for 15 seconds, then re-masks; TOTP countdown updates on keypress
   - Clear the revealed-secret screen region on exit; leave nothing in scrollback
@@ -148,7 +148,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Clock-skew warning when `physical_now < highest_seen`
   - _Requirements: 4.10, 4.11, 3.11_
 
-- [ ] 16. Expanded layout
+- [x] 16. Expanded layout
   - Detect terminal size; two-pane list/detail above 80 columns
   - _Requirements: 4.9_
 

@@ -554,6 +554,23 @@ def cmd_calibrate(args: argparse.Namespace, console: Console) -> int:
     return 0
 
 
+def cmd_tui(args: argparse.Namespace, console: Console) -> int:
+    """Launch the full-screen interface.
+
+    The vault stays open only for the lifetime of this call, and the key is
+    dropped on the way out (requirement 4.17): no daemon, no auto-lock, because
+    quitting is the lock.
+    """
+    from .tui import run_tui
+
+    with open_vault(args, console) as vault:
+        return run_tui(
+            vault,
+            width=args.width or None,
+            height=args.height or None,
+        )
+
+
 def cmd_gen(args: argparse.Namespace, console: Console) -> int:
     from . import generator
 
@@ -867,6 +884,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--parallelism", type=int, default=4)
     p_cal.add_argument("--runs", type=int, default=3)
     p_cal.set_defaults(func=cmd_calibrate)
+
+    p_tui = sub.add_parser("tui", help="launch the full-screen interface")
+    p_tui.add_argument(
+        "--width", type=int, default=0, help="override detected terminal width"
+    )
+    p_tui.add_argument(
+        "--height", type=int, default=0, help="override detected terminal height"
+    )
+    p_tui.add_argument("--recovery-key", action="store_true")
+    p_tui.set_defaults(func=cmd_tui)
 
     p_gen = sub.add_parser("gen", help="generate a password or passphrase")
     p_gen.add_argument("-n", "--length", type=int, default=20)
