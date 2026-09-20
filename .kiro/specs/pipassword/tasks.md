@@ -25,7 +25,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Known-answer tests; assert AAD tampering fails
   - _Requirements: 2.1, 2.2, 2.6, 2.8, 2.9, 6.1_
 
-- [ ] 3. Keyfile format (`format.py`)
+- [x] 3. Keyfile format (`format.py`)
   - Encode/decode `keys.<gen>.mpk` exactly per design §3.1
   - Bind `HDR = bytes[0:54]` as AAD on both wrap slots
   - `create_keyfile` (password + recovery slots), `open_keyfile` trying the highest
