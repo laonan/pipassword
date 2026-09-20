@@ -530,6 +530,36 @@ Out of scope, and not claimed:
 - Offline brute-force throttling. An attacker with the file bypasses the
   application; the KDF is the only real defence.
 
+## Planned: PIN unlock
+
+**Not implemented yet.** Specified in
+[`requirements.md` section 9](.kiro/specs/pipassword/requirements.md) and
+[`design.md` section 9a](.kiro/specs/pipassword/design.md), tracked as task 18.
+
+A high-entropy master password is slow to type on a BBQ20 thumb keyboard, slow enough
+to discourage opening the vault. The planned answer is an opt-in PIN backed by a
+256-bit secret in a **local, never-synced** file, so that the PIN and the file are
+both required.
+
+The trade, which will be stated at least as plainly in the tool itself:
+
+| Threat | Today | With a PIN on that device |
+|---|---|---|
+| A vault copy leaks via Syncthing, rclone or a backup | defended | **still fully defended** — the slot file is never in the vault |
+| The device itself is stolen | defended by the KDF | **degraded to ~20 bits** for six digits; minutes to crack |
+
+It will be off by default, will not change the vault format, and will not be a
+recovery path — the master password and paper recovery key remain independent.
+
+There is no rate limiting, and there cannot be: a Pi Zero 2 W has no secure element,
+so an offline attack on a copied slot file runs at the attacker's speed. A phone PIN
+is safe because hardware refuses the eleventh guess; nothing here can make that claim.
+
+If you would rather not make that trade, the cheaper option is a shorter
+*high-entropy* password instead of a passphrase: 11 random lowercase letters is
+50 bits in 11 keystrokes, against 36 for a five-word phrase of the same strength, and
+uses no modifier layer.
+
 ## Development
 
 The package targets aarch64 Linux, but the test suite runs anywhere:

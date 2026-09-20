@@ -42,6 +42,28 @@ Out of scope, and explicitly not claimed:
 - Offline brute force throttling. An attacker with the vault file bypasses the
   application entirely; the only real defence is the KDF cost.
 
+### Threat model amendment: the PIN unlock slot
+
+Section 9 introduces an **opt-in** PIN unlock slot. It deliberately trades away part
+of T1, and that trade must be stated rather than buried.
+
+With a PIN configured on a device:
+
+| Threat | Without a PIN | With a PIN on that device |
+|---|---|---|
+| **T1** device lost or stolen | defended by the KDF over a high-entropy password | **degraded to the PIN's entropy**, roughly 20 bits for six digits. A thief holding both the vault and `pin.unlock` cracks it in minutes |
+| **T2** a vault copy leaks via Syncthing, rclone, a backup, another device's SD card | defended | **still fully defended.** `pin.unlock` never enters the vault directory and is never synced, so a leaked copy has nothing a PIN could weaken |
+
+The reasoning for accepting this: a leaked replicated or backed-up copy is the more
+likely event for most people, and it is the one a PIN does not touch. Device theft is
+the less likely event and is the one it exposes. Anyone who disagrees with that
+weighting should not enable the feature, which is why it is off by default.
+
+**This is not rate limiting.** No software on a Pi can rate-limit an offline attack;
+there is no secure element or TPM to enforce it. A phone's six-digit PIN is safe
+because hardware refuses the eleventh guess. Nothing here can make that claim, and
+the documentation must not imply otherwise.
+
 ---
 
 ## 1. Platform
@@ -366,7 +388,77 @@ when the correct time is known from another source.
 
 ---
 
-## 8. Non-goals
+## 9. PIN unlock slot (planned, not yet implemented)
+
+**User story:** As a Beepy user, typing a high-entropy password on a thumb keyboard is
+slow enough that I avoid opening the vault. I want a short PIN for routine unlocking
+on that device, accepting that it weakens theft protection there.
+
+### Why this exists
+
+Measured alternatives, at equal security:
+
+| Credential | Entropy | Keystrokes | Modifier layer |
+|---|---|---|---|
+| 5 words | 49 bits | 36 | Sym, for the separator |
+| 11 random lowercase letters | 50 bits | 11 | none |
+| 6-digit PIN | 20 bits | 6 | Alt, for digits |
+
+Eleven lowercase letters was offered first as the cheaper answer: identical strength,
+a third of the keystrokes, no modifier layer. It was declined as still too long. The
+PIN is therefore a deliberate, informed security reduction, not an oversight.
+
+9.1. The PIN slot SHALL be **opt-in**. `init` SHALL NOT offer or create one.
+
+9.2. The unlock secret SHALL live in a single file under the per-device config
+directory, by default `~/.config/pipassword/pin.unlock`.
+
+9.3. That file SHALL NOT be created inside the vault directory under any code path,
+and the documentation SHALL state that the config directory must not be synced. This
+is what preserves T2: a replicated or backed-up vault contains nothing the PIN
+protects.
+
+9.4. The file SHALL contain a 256-bit random device secret. The unlock key SHALL be
+derived from **both** the PIN and that secret, so that neither alone is sufficient.
+
+9.5. The file SHALL be mode `0600`, and the system SHALL refuse to use it if its
+permissions are broader.
+
+9.6. The file SHALL be bound to one vault by UUID, and SHALL be rejected with an
+explanatory error if it does not match the vault being opened.
+
+9.7. `pipw pin set` SHALL require the master password or the recovery key, since it
+needs the DEK to wrap.
+
+9.8. `pipw pin remove` SHALL NOT require any credential. It deletes a local file, and
+demanding the password to remove a convenience feature would be theatre.
+
+9.9. WHEN a PIN slot exists for the vault being opened THEN unlock SHALL prompt for
+the PIN first and fall back to the master password on request.
+
+9.10. The system SHALL enforce a minimum PIN length of 4 and SHALL warn below 6,
+stating the entropy in bits and the approximate offline cracking time.
+
+9.11. The system SHALL count consecutive failures in the file and delete the slot
+after a configurable limit, default 5. This SHALL be documented as a **speed bump,
+not rate limiting**: an attacker who copies the file first defeats it entirely. Any
+wording implying enforced attempt limits is a documentation defect.
+
+9.12. The PIN SHALL NOT be a recovery path. `recover.py` SHALL NOT read the slot, and
+losing the device SHALL NOT cost access, because the master password and the paper
+recovery key remain independent.
+
+9.13. Raising the Argon2 cost for the PIN slot SHALL be permitted but SHALL NOT be
+presented as compensating for low entropy: each doubling of cost buys one bit, while a
+sixth digit buys 3.3.
+
+9.14. `pipw pin status` SHALL report whether a slot exists, which vault it belongs to,
+its parameters, and the failure count.
+
+9.15. The vault keyfile format SHALL NOT change. The slot is a separate local file, so
+`keys.N.mpk`, `FORMAT.md` version 1, and `recover.py` are all unaffected.
+
+## 10. Non-goals
 
 - macOS, Windows, 32-bit ARM support
 - KDBX / KeePass interoperability

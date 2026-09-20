@@ -436,6 +436,110 @@ the data is gone.
 
 ---
 
+## 9a. PIN unlock slot (planned, not yet implemented)
+
+A local, opt-in convenience credential. See requirements section 9 for the
+threat-model trade this makes, which is deliberate: it preserves T2 (a leaked vault
+copy) and degrades T1 (a stolen device).
+
+### Why a separate file rather than a third keyfile slot
+
+The keyfile lives in the vault directory, so it is synced. A PIN-wrapped slot inside
+it would travel to every device and into every backup, which is precisely the copy a
+20-bit secret must never protect. Putting the slot in a **non-synced local file**
+inverts that: the thing a PIN guards never leaves the device.
+
+It also means the vault format does not change. `keys.N.mpk` stays at version 1,
+`FORMAT.md` is untouched, and `recover.py` keeps working with no knowledge of PINs.
+
+```
+~/.config/pipassword/          per-device, NEVER synced
+  pin.unlock                   <- the slot; mode 0600
+~/.local/share/pipassword/vault/
+  keys.1.mpk                   <- unchanged, still password + recovery only
+```
+
+### File layout — `pin.unlock`, 143 bytes
+
+| Offset | Len | Field | Notes |
+|---:|---:|---|---|
+| 0 | 8 | `magic` | `"PIPWPIN\0"` |
+| 8 | 2 | `format_version` | `1` |
+| 10 | 16 | `vault_uuid` | binds the slot to one vault (req 9.6) |
+| 26 | 1 | `kdf_id` | `1` = Argon2id |
+| 27 | 4 | `memory_cost` | KiB |
+| 31 | 1 | `time_cost` | |
+| 32 | 1 | `parallelism` | |
+| 33 | 16 | `argon2_salt` | |
+| 49 | 32 | `device_secret` | 256 random bits (req 9.4) |
+| 81 | 12 | `nonce` | |
+| 93 | 48 | `ct` | 32-byte DEK + 16-byte tag |
+| 141 | 2 | `failure_count` | u16, **outside the AAD** |
+
+`failure_count` sits after the ciphertext and outside the authenticated data
+deliberately: it must be updatable in place without re-wrapping the DEK. The cost is
+that it is unauthenticated and therefore trivially resettable, which is consistent
+with it being a speed bump rather than a control.
+
+### Derivation
+
+```
+pin_kek    = Argon2id(UTF8(NFC(pin)), argon2_salt, params)      # 32 bytes
+unlock_key = BLAKE2b(pin_kek, key=device_secret,
+                     person="pipw-pin", digest_size=32)
+aad        = pin.unlock[0:81] + "pipw-pin-slot-v1"
+DEK        = ChaCha20Poly1305_Decrypt(unlock_key, nonce, ct, aad)
+```
+
+Both inputs are required: the PIN contributes ~20 bits, the device secret 256. An
+attacker with the vault but not the file faces 256 bits and stops. An attacker with
+both faces 20 and does not.
+
+NFC normalisation matches the master password path, for the same reason — a PIN typed
+through an IME must derive the same key on every device.
+
+The same primitives as everywhere else, so no new cryptographic surface: Argon2id,
+BLAKE2b keyed derivation as used for the recovery key, ChaCha20-Poly1305 with a
+domain-separation label.
+
+### Unlock flow
+
+```
+open_vault:
+    slot = read pin.unlock if present
+    if slot and slot.vault_uuid == keyfile.vault_uuid:
+        prompt "PIN (or blank for master password): "
+        if blank                  -> master password path
+        if correct                -> reset failure_count, return DEK
+        if wrong                  -> increment failure_count
+                                     if failure_count >= limit: delete slot
+                                     re-prompt or fall back
+    else:
+        master password path
+```
+
+Mode is checked before use (req 9.5): a `pin.unlock` readable by others is refused,
+because the whole value of the file is that only this device's owner has it.
+
+### Commands
+
+| Command | Credential needed | Effect |
+|---|---|---|
+| `pipw pin set` | master password or recovery key | generate secret, wrap DEK, write slot |
+| `pipw pin remove` | none | delete the local file |
+| `pipw pin status` | none | report vault, parameters, failure count |
+
+`pin set` needs the DEK, hence a real credential. `pin remove` needs nothing: it
+deletes a local file that only reduces security, and requiring a password to give up
+a convenience would be pointless friction.
+
+### What this must not claim
+
+The failure counter is not rate limiting. There is no secure element on a Pi Zero 2 W,
+so an offline attack against a copied `pin.unlock` proceeds at the attacker's speed.
+Any user-facing wording that implies enforced attempt limits is a defect, and the
+warning at `pin set` time states the bit count and approximate cracking time instead.
+
 ## 10. Error handling
 
 | Condition | Behaviour |

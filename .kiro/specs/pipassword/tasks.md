@@ -167,6 +167,37 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
 
 ---
 
+- [ ] 18. PIN unlock slot (`pinslot.py`)
+  - Requested after production use on the Beepy: a high-entropy master password is
+    slow enough on a BBQ20 thumb keyboard to discourage opening the vault at all. An
+    11-character lowercase password was offered first as the cheaper answer (same
+    50 bits, a third of the keystrokes, no modifier layer) and declined as still too
+    long. This is therefore a deliberate, informed security reduction
+  - **Read requirements section 9 and design section 9a before starting.** The trade
+    is that T2 (a leaked vault copy) stays fully defended while T1 (a stolen device)
+    degrades to the PIN's ~20 bits
+  - 18.1 `pinslot.py`: encode/decode the 143-byte layout from design 9a, with
+    `failure_count` outside the AAD so it can be updated without re-wrapping
+  - 18.2 derivation: `BLAKE2b(Argon2id(pin), key=device_secret, person="pipw-pin")`,
+    NFC-normalised like the master password. No new primitives
+  - 18.3 `Vault.unlock(pin=...)`: try the slot, fall back to the master password on a
+    blank entry. Refuse a slot whose `vault_uuid` differs, or whose mode is broader
+    than 0600
+  - 18.4 failure counting with slot deletion at the limit, default 5
+  - 18.5 CLI: `pin set` (needs master password or recovery key), `pin remove` (needs
+    nothing), `pin status`
+  - 18.6 TUI: prompt for the PIN when a slot exists
+  - 18.7 warning at `pin set` that states entropy in bits and approximate offline
+    cracking time, and does **not** describe the counter as rate limiting
+  - 18.8 tests: a leaked vault directory alone must be unopenable with the PIN (the
+    property that justifies the feature); the slot must never be written into the
+    vault directory; `recover.py` must ignore it entirely; `keys.N.mpk` and
+    `FORMAT.md` must be unchanged; a wrong `vault_uuid`, a loose mode, and a
+    truncated slot must each be refused with a clear message
+  - 18.9 README: document the trade in the same table form as the spec, under a
+    heading that makes the theft exposure impossible to miss
+  - _Requirements: 9.1-9.15_
+
 ## Deferred
 
 - Log compaction (`mp compact`). The `seq` and coverage fields are specified now; at
