@@ -153,6 +153,17 @@ class KdfParams:
     def memory_cost_mib(self) -> float:
         return self.memory_cost_kib / 1024
 
+    @property
+    def memory_human(self) -> str:
+        """Human-readable memory size, in KiB below one MiB.
+
+        Test parameters use tiny values like 64 KiB, which would otherwise render
+        as a confusing "0 MiB".
+        """
+        if self.memory_cost_kib < 1024:
+            return f"{self.memory_cost_kib} KiB"
+        return f"{self.memory_cost_mib:.0f} MiB"
+
 
 DEFAULT_KDF_PARAMS = KdfParams()
 """Defaults from requirement 2.2.

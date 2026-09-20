@@ -464,3 +464,16 @@ class TestNonceReuseSurface:
         """Sanity check on the random-nonce choice for per-event encryption."""
         nonces = {crypto.generate_nonce() for _ in range(20_000)}
         assert len(nonces) == 20_000
+
+
+class TestMemoryHuman:
+    """Tiny test parameters must not render as a confusing "0 MiB"."""
+
+    def test_below_one_mib_shows_kib(self):
+        assert crypto.KdfParams(
+            time_cost=1, memory_cost_kib=64, parallelism=1
+        ).memory_human == "64 KiB"
+
+    def test_at_and_above_one_mib_shows_mib(self):
+        assert crypto.KdfParams(memory_cost_kib=1024).memory_human == "1 MiB"
+        assert crypto.DEFAULT_KDF_PARAMS.memory_human == "64 MiB"

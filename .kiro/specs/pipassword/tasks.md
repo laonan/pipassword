@@ -81,7 +81,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - CI test: output must match `export --plaintext` for a generated vault
   - _Requirements: 6.2, 6.3_
 
-- [ ] 9. CLI (`cli.py`)
+- [x] 9. CLI (`cli.py`)
   - `init` — create vault, display the grouped Base32 recovery key, require
     acknowledgement that it was recorded
   - `get <query> [--field F]`, `add`, `edit`, `delete`, `list`

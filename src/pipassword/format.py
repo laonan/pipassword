@@ -10,6 +10,7 @@ optional sections, no nesting. A recovery tool should be able to parse it with
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 import struct
@@ -944,3 +945,29 @@ def repair_log(path: Path, dek: bytes) -> tuple[int, list[LogAnomaly]]:
     finally:
         os.close(fd)
     return discarded, result.anomalies
+
+
+def archive_keyfile(vault_dir: Path, generation: int) -> Path:
+    """Move a superseded keyfile generation into ``archive/``.
+
+    Called after a rotation has been written and verified. This is the step that
+    makes rotation meaningful: while an old generation remains readable at the top
+    level, the old master password still opens the vault, because
+    :func:`load_keyfile` would fall back to it. Moving rather than deleting keeps
+    the file available if something went wrong, and the CLI tells the user to
+    delete ``archive/`` once satisfied. See design section 3.1.
+    """
+    source = keyfile_path(vault_dir, generation)
+    if not source.is_file():
+        raise KeyfileNotFoundError(f"{source.name} does not exist")
+
+    archive = ensure_dir(vault_dir / "archive")
+    target = archive / source.name
+    if target.exists():
+        stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        target = archive / f"{source.stem}.{stamp}{source.suffix}"
+    os.replace(source, target)
+    return target
+
+
+__all__.append("archive_keyfile")
