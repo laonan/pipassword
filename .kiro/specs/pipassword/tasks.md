@@ -15,7 +15,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
   - Set up pytest with a temporary-vault fixture. No test may touch a real vault path
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6_
 
-- [ ] 2. Crypto primitives (`crypto.py`)
+- [x] 2. Crypto primitives (`crypto.py`)
   - `derive_kek(password, salt, params)` via `argon2-cffi` `hash_secret_raw`,
     `Type.ID`, defaults `t=3`, `m=65536`, `p=4`, `hash_len=32`
   - `derive_rkek(recovery_key)` via keyed BLAKE2b with `person=b"pipw-rkey"`
