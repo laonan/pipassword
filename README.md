@@ -530,37 +530,48 @@ Out of scope, and not claimed:
 - Offline brute-force throttling. An attacker with the file bypasses the
   application; the KDF is the only real defence.
 
-## Planned: PIN unlock
+## PIN unlock (optional)
 
-**Not implemented yet.** Specified in
-[`requirements.md` section 9](.kiro/specs/pipassword/requirements.md) and
-[`design.md` section 9a](.kiro/specs/pipassword/design.md), tracked as task 18.
+Typing a high-entropy master password on a BBQ20 thumb keyboard is slow. A PIN gives
+you a short unlock **on one device**, backed by a 256-bit secret in a local file that
+is never synced.
 
-A high-entropy master password is slow to type on a BBQ20 thumb keyboard, slow enough
-to discourage opening the vault. The planned answer is an opt-in PIN backed by a
-256-bit secret in a **local, never-synced** file, so that the PIN and the file are
-both required.
+```bash
+pipw pin set        # asks for a PIN, then your master password to authorise
+pipw pin status
+pipw pin remove     # needs no password; it only removes a convenience
+```
 
-The trade, which will be stated at least as plainly in the tool itself:
+Once set, every command on that device offers the PIN first; a blank entry falls back
+to the master password, and `--no-pin` skips it. Your master password and paper
+recovery key keep working unchanged.
 
-| Threat | Today | With a PIN on that device |
+**The trade, stated plainly** — this is off by default for a reason:
+
+| Threat | Without a PIN | With a PIN on that device |
 |---|---|---|
-| A vault copy leaks via Syncthing, rclone or a backup | defended | **still fully defended** — the slot file is never in the vault |
-| The device itself is stolen | defended by the KDF | **degraded to ~20 bits** for six digits; minutes to crack |
+| A vault copy leaks via Syncthing, rclone or a backup | defended | **still fully defended** — the PIN's secret is never in the vault |
+| The device itself is stolen | defended by the KDF | **degraded to ~20 bits** for six digits; crackable in minutes |
 
-It will be off by default, will not change the vault format, and will not be a
-recovery path — the master password and paper recovery key remain independent.
+The reasoning: a leaked replicated or backed-up copy is the likelier event for most
+people, and it is the one a PIN does not touch. Device theft is less likely and is the
+one it exposes. If you weigh those differently, do not set a PIN.
 
-There is no rate limiting, and there cannot be: a Pi Zero 2 W has no secure element,
-so an offline attack on a copied slot file runs at the attacker's speed. A phone PIN
-is safe because hardware refuses the eleventh guess; nothing here can make that claim.
+**There is no rate limiting, and there cannot be.** A Pi Zero 2 W has no secure
+element, so an offline attack on a copied `pin.unlock` runs at the attacker's speed.
+The wrong-attempt counter deletes the slot after five tries, but an attacker who
+copies the file first resets it at will — it stops a curious person, not an attack. A
+phone PIN is safe because hardware refuses the eleventh guess; nothing here can make
+that claim.
 
-If you would rather not make that trade, the cheaper option is a shorter
-*high-entropy* password instead of a passphrase: 11 random lowercase letters is
-50 bits in 11 keystrokes, against 36 for a five-word phrase of the same strength, and
-uses no modifier layer.
+The PIN is **not a recovery path**: `recover.py` ignores it, and losing the device
+costs you nothing, because the master password and recovery key are independent.
 
-## Development
+If you would rather not make the theft trade, the cheaper option is a shorter
+*high-entropy* password: 11 random lowercase letters is 50 bits in 11 keystrokes,
+against 36 for an equally strong five-word phrase, with no modifier layer.
+
+## Development## Development
 
 The package targets aarch64 Linux, but the test suite runs anywhere:
 

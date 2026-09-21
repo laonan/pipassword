@@ -564,3 +564,87 @@ class TestBenchmarkExtrapolation:
         assert code == 0, err
         assert "(measured)" in out
         assert "extrapolated" not in err
+
+
+class TestPinCommands:
+    """CLI surface for the PIN slot (task 18.5)."""
+
+    def _setup(self, run):
+        code, out, err = run("-y", "init", *FAST_ARGS, stdin=f"{PW}\n")
+        assert code == 0, err
+        run("add", "GitHub", "--login", "laonan", "--password", "ghp_secret")
+        return run
+
+    def test_status_when_unset(self, run):
+        self._setup(run)
+        code, out, _ = run("pin", "status")
+        assert code == 0
+        assert "not set" in out
+
+    def test_set_then_unlock_with_pin(self, run):
+        self._setup(run)
+        # pin set reads the PIN first, then the master password.
+        code, _, err = run("pin", "set", stdin=f"246810\n{PW}\n")
+        assert code == 0, err
+        assert "PIN set" in err
+
+        # A subsequent command offers the PIN first; supply it and nothing else.
+        code, out, _ = run("get", "GitHub", "--field", "password", stdin="246810\n")
+        assert code == 0
+        assert out == "ghp_secret\n"
+
+    def test_set_warns_about_short_pin(self, run):
+        self._setup(run)
+        code, _, err = run("pin", "set", stdin=f"1234\n{PW}\n")
+        assert code == 0, err
+        assert "bits" in err
+        assert "stolen" in err
+        # Must not claim rate limiting (requirement 9.11).
+        assert "speed bump" in err
+
+    def test_status_after_set(self, run):
+        self._setup(run)
+        run("pin", "set", stdin=f"246810\n{PW}\n")
+        code, out, _ = run("pin", "status")
+        assert code == 0
+        assert "set on this device" in out
+        assert "0/5" in out
+
+    def test_remove_needs_no_password(self, run):
+        self._setup(run)
+        run("pin", "set", stdin=f"246810\n{PW}\n")
+        code, _, err = run("pin", "remove", stdin="")  # no credential
+        assert code == 0
+        assert "removed" in err.lower()
+
+        code, out, _ = run("pin", "status")
+        assert "not set" in out
+
+    def test_wrong_pin_then_blank_falls_back_to_password(self, run):
+        self._setup(run)
+        run("pin", "set", stdin=f"246810\n{PW}\n")
+        # wrong PIN, blank to fall back, then the master password.
+        code, out, err = run(
+            "get", "GitHub", "--field", "password", stdin=f"999999\n\n{PW}\n"
+        )
+        assert code == 0, err
+        assert out == "ghp_secret\n"
+        assert "attempt" in err
+
+    def test_no_pin_flag_skips_the_pin(self, run):
+        self._setup(run)
+        run("pin", "set", stdin=f"246810\n{PW}\n")
+        # --no-pin goes straight to the master password.
+        code, out, _ = run(
+            "--no-pin", "get", "GitHub", "--field", "password", stdin=f"{PW}\n"
+        )
+        assert code == 0
+        assert out == "ghp_secret\n"
+
+    def test_where_reports_pin_state(self, run):
+        self._setup(run)
+        code, out, _ = run("where")
+        assert "pin        not set" in out
+        run("pin", "set", stdin=f"246810\n{PW}\n")
+        code, out, _ = run("where")
+        assert "pin        set" in out

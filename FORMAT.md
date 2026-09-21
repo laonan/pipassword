@@ -289,3 +289,51 @@ reading the event history for that record.
 6. Sort and replay per §3.2.
 
 `recover.py --help` performs exactly these steps.
+
+---
+
+## 5. PIN unlock slot — `~/.config/pipassword/pin.unlock` (optional)
+
+This file is **not part of the vault** and is **not required to read it**.
+`recover.py` ignores it entirely; the master password and recovery key are the only
+paths it and this specification care about. It is documented here only so the format
+is complete.
+
+It is an opt-in local convenience: a short PIN that unlocks the vault *on one
+device*, backed by a 256-bit secret that never leaves that device. It deliberately
+trades theft resistance for typing convenience — see the project's design notes. It
+lives in the per-device config directory, never in the synced vault directory, so a
+leaked or backed-up vault copy contains nothing it protects.
+
+Exactly **143 bytes**.
+
+| Offset | Len | Field | Notes |
+|---:|---:|---|---|
+| 0 | 8 | `magic` | `"PIPWPIN\0"` |
+| 8 | 2 | `format_version` | `1` |
+| 10 | 16 | `vault_uuid` | must match the vault this slot unlocks |
+| 26 | 1 | `kdf_id` | `1` = Argon2id |
+| 27 | 4 | `memory_cost` | KiB |
+| 31 | 1 | `time_cost` | |
+| 32 | 1 | `parallelism` | |
+| 33 | 16 | `argon2_salt` | |
+| 49 | 32 | `device_secret` | 256 random bits |
+| 81 | 12 | `nonce` | |
+| 93 | 48 | `ct` | 32-byte DEK + 16-byte tag |
+| 141 | 2 | `failure_count` | u16, **outside the AAD** |
+
+```
+pin_kek    = Argon2id(UTF8(NFC(pin)), argon2_salt, params)
+unlock_key = BLAKE2b(pin_kek, key=device_secret, person="pipw-pin", digest_size=32)
+aad        = pin.unlock[0:81] + "pipw-pin-slot-v1"
+DEK        = ChaCha20Poly1305_Decrypt(unlock_key, nonce, ct, aad)
+```
+
+Both the PIN and `device_secret` are required. The AAD covers bytes 0–80 (through the
+device secret) plus the label, but **not** `failure_count`: the counter must be
+updatable in place without re-wrapping, so it is unauthenticated and trivially
+resettable. That is by design. The counter is a speed bump, not rate limiting — no
+software on this hardware can throttle an offline attack against a copied file.
+
+A reader MUST refuse a slot whose `vault_uuid` does not match, and SHOULD refuse one
+whose file mode is readable by group or other.

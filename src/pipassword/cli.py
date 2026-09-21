@@ -156,18 +156,50 @@ def open_vault(args: argparse.Namespace, console: Console) -> Vault:
             f"pass --vault."
         )
 
+    config_dir = resolve_config_dir(args)
+
     if getattr(args, "recovery_key", False):
         raw = console.ask_secret("Recovery key: ")
         return Vault.unlock(
             vault_dir,
             recovery_key=crypto.parse_recovery_key(raw),
-            config_dir=resolve_config_dir(args),
+            config_dir=config_dir,
         )
 
+    # If this device has a PIN slot for this vault, offer it first. This is the
+    # convenience the feature exists for: a short PIN on the device you carry,
+    # backed by a non-synced local secret. A blank entry falls back to the master
+    # password, and an exhausted PIN removes the slot and falls back too.
+    if not getattr(args, "no_pin", False) and Vault.has_pin(config_dir):
+        vault = _try_pin_unlock(vault_dir, config_dir, console)
+        if vault is not None:
+            return vault
+
     password = console.ask_secret("Master password: ")
-    return Vault.unlock(
-        vault_dir, password=password, config_dir=resolve_config_dir(args)
-    )
+    return Vault.unlock(vault_dir, password=password, config_dir=config_dir)
+
+
+def _try_pin_unlock(vault_dir, config_dir, console: Console) -> Vault | None:
+    """Attempt PIN unlock, returning None to signal a fall back to the password.
+
+    Kept out of ``open_vault`` because the retry-and-fallback logic is fiddly and
+    would obscure the common path.
+    """
+    from .pinslot import PinAttemptsExhausted, PinError
+
+    while True:
+        pin = console.ask_secret("PIN (blank for master password): ")
+        if not pin:
+            return None
+        try:
+            return Vault.unlock(vault_dir, pin=pin, config_dir=config_dir)
+        except PinAttemptsExhausted as exc:
+            console.err(f"{exc}")
+            return None
+        except PinError as exc:
+            # Wrong PIN, or a slot bound to another vault. The message already says
+            # how many attempts remain; loop so the user can retry or blank out.
+            console.err(f"{exc}")
 
 
 def report_health(vault: Vault, console: Console) -> None:
@@ -961,6 +993,87 @@ def cmd_recovery_script(args: argparse.Namespace, console: Console) -> int:
     return 0
 
 
+def cmd_pin(args: argparse.Namespace, console: Console) -> int:
+    from . import pinslot
+
+    config_dir = resolve_config_dir(args)
+
+    if args.pin_command == "status":
+        return _pin_status(config_dir, console)
+
+    if args.pin_command == "remove":
+        # Requirement 9.8: no credential needed to give up a convenience.
+        had = pinslot.pin_slot_exists(config_dir)
+        pinslot.PinSlotFile(pinslot.pin_slot_path(config_dir)).delete()
+        console.err("PIN removed." if had else "No PIN was set on this device.")
+        return 0
+
+    # args.pin_command == "set"
+    pin = console.ask_secret("Choose a PIN: ")
+    if len(pin) < pinslot.MIN_PIN_LENGTH:
+        console.err(f"error: a PIN must be at least {pinslot.MIN_PIN_LENGTH} characters")
+        return 1
+    if not console.secrets_from_stdin:
+        if console.ask_secret("Repeat it: ") != pin:
+            console.err("error: the two entries did not match")
+            return 1
+
+    # Requirement 9.10 / 9.11: state the real cost before writing anything.
+    bits = pinslot.pin_entropy_bits(pin)
+    if len(pin) < pinslot.WARN_PIN_LENGTH:
+        console.err(
+            f"note: this PIN is about {bits:.0f} bits. If this device is stolen, the "
+            f"vault could be cracked in {pinslot.crack_time_estimate(bits)}. This is "
+            f"a convenience for a device you trust physically, not a substitute for "
+            f"the master password."
+        )
+    console.err(
+        "note: the PIN protects THIS DEVICE only. A leaked or backed-up copy of the "
+        "vault is unaffected, because the PIN's secret is never synced. But anyone "
+        "who takes this device has both halves. The wrong-attempt counter is a speed "
+        "bump, not a lockout: it cannot stop an offline attack on a copied file."
+    )
+
+    # set_pin needs the DEK, so we must unlock with a real credential first.
+    with open_vault(_force_no_pin(args), console) as vault:
+        vault.set_pin(pin)
+    console.err("PIN set. It unlocks this device only; your master password still works.")
+    return 0
+
+
+def _pin_status(config_dir, console: Console) -> int:
+    from . import pinslot
+
+    slot_file = pinslot.load_pin_slot(config_dir)
+    if slot_file is None:
+        console.out("PIN: not set on this device")
+        return 0
+    try:
+        slot = slot_file.read()
+    except Exception as exc:
+        console.out(f"PIN: present but unreadable ({exc})")
+        return 1
+    console.out("PIN: set on this device")
+    console.out(f"  vault        {slot.vault_uuid_str}")
+    console.out(f"  argon2       {slot.params.memory_human}, t={slot.params.time_cost}")
+    console.out(f"  failures     {slot.failure_count}/{slot_file.failure_limit}")
+    console.out(f"  file         {slot_file.path}")
+    return 0
+
+
+def _force_no_pin(args: argparse.Namespace) -> argparse.Namespace:
+    """A copy of args that will not itself try PIN unlock.
+
+    Setting a PIN must authenticate with the master password or recovery key, not
+    with an existing PIN, so open_vault must skip the PIN path here.
+    """
+    import copy
+
+    clone = copy.copy(args)
+    clone.no_pin = True
+    return clone
+
+
 def cmd_where(args: argparse.Namespace, console: Console) -> int:
     vault_dir = resolve_vault_dir(args)
     config_dir = resolve_config_dir(args)
@@ -971,6 +1084,8 @@ def cmd_where(args: argparse.Namespace, console: Console) -> int:
     console.out(f"keyfiles   {generations if generations else 'none'}")
     logs = fmt.find_logs(vault_dir / "log")
     console.out(f"logs       {[p.name for p in logs] if logs else 'none'}")
+    pin = "set" if Vault.has_pin(config_dir) else "not set"
+    console.out(f"pin        {pin}")
     return 0
 
 
@@ -993,6 +1108,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-y", "--yes", action="store_true", help="assume yes for confirmations"
+    )
+    parser.add_argument(
+        "--no-pin",
+        dest="no_pin",
+        action="store_true",
+        help="skip the PIN and unlock with the master password",
     )
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -1143,6 +1264,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rec.add_argument("-o", "--output", help="write here instead of stdout")
     p_rec.set_defaults(func=cmd_recovery_script)
+
+    p_pin = sub.add_parser(
+        "pin", help="manage a device PIN (a convenience, not a substitute password)"
+    )
+    pin_sub = p_pin.add_subparsers(dest="pin_command", metavar="ACTION", required=True)
+    p_pin_set = pin_sub.add_parser("set", help="set or replace this device's PIN")
+    p_pin_set.add_argument("--recovery-key", action="store_true")
+    p_pin_set.set_defaults(func=cmd_pin)
+    pin_sub.add_parser("remove", help="remove this device's PIN (no password needed)")
+    pin_sub.add_parser("status", help="show whether a PIN is set and its state")
+    p_pin.set_defaults(func=cmd_pin)
 
     p_where = sub.add_parser("where", help="show vault and config paths")
     p_where.set_defaults(func=cmd_where)

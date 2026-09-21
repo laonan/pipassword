@@ -379,22 +379,35 @@ class Vault:
         *,
         password: str | bytes | None = None,
         recovery_key: bytes | None = None,
+        pin: str | None = None,
         config_dir: Path | str | None = None,
         device_name: str | None = None,
         check_memory: bool = True,
     ) -> Vault:
-        """Open an existing vault with a password or the paper recovery key."""
-        if (password is None) == (recovery_key is None):
-            raise VaultError("supply exactly one of password or recovery_key")
+        """Open an existing vault with a password, the recovery key, or a PIN.
+
+        Exactly one credential. The PIN path (requirement 9) only works if a PIN slot
+        exists in the config directory for this vault, and it is a deliberate
+        convenience-for-security trade documented in the spec: it protects a leaked
+        vault copy but not a stolen device.
+        """
+        given = [c is not None for c in (password, recovery_key, pin)]
+        if sum(given) != 1:
+            raise VaultError(
+                "supply exactly one of password, recovery_key, or pin"
+            )
 
         vault_dir = Path(vault_dir)
         config_dir = default_config_dir() if config_dir is None else Path(config_dir)
         keyfile = fmt.load_keyfile(vault_dir)
+
         if password is not None:
             dek = keyfile.unwrap_with_password(password, check_memory=check_memory)
-        else:
-            assert recovery_key is not None
+        elif recovery_key is not None:
             dek = keyfile.unwrap_with_recovery_key(recovery_key)
+        else:
+            assert pin is not None
+            dek = cls._unlock_with_pin(vault_dir, config_dir, keyfile, pin)
 
         return cls._open(
             vault_dir=vault_dir,
@@ -403,6 +416,29 @@ class Vault:
             dek=dek,
             device_name=device_name,
         )
+
+    @staticmethod
+    def _unlock_with_pin(
+        vault_dir: Path, config_dir: Path, keyfile: fmt.Keyfile, pin: str
+    ) -> bytes:
+        # Imported here, not at module scope: pinslot imports from format, and vault
+        # imports both, so a top-level import would be circular.
+        from . import pinslot
+
+        slot_file = pinslot.load_pin_slot(config_dir)
+        if slot_file is None:
+            raise VaultError(
+                "no PIN is set on this device. Unlock with your master password, "
+                "or run 'pipw pin set' first."
+            )
+        return slot_file.unlock(pin, keyfile.vault_uuid)
+
+    @staticmethod
+    def has_pin(config_dir: Path | str | None = None) -> bool:
+        from . import pinslot
+
+        config_dir = default_config_dir() if config_dir is None else Path(config_dir)
+        return pinslot.pin_slot_exists(config_dir)
 
     @classmethod
     def _open(
@@ -836,6 +872,38 @@ class Vault:
                 )
             ]
         )
+
+    # ---------------------------------------------------------------- PIN slot
+
+    def set_pin(self, pin: str, *, check_memory: bool = True) -> None:
+        """Create or replace this device's PIN slot, wrapping the current DEK.
+
+        Requires an already-unlocked vault, which is how requirement 9.7's "needs the
+        master password or recovery key" is enforced in practice: you cannot reach
+        this method without having unlocked first.
+        """
+        self._require_open()
+        from . import pinslot
+
+        slot_file = pinslot.PinSlotFile(pinslot.pin_slot_path(self.config_dir))
+        slot_file.create(
+            vault_uuid=self.keyfile.vault_uuid,
+            dek=self.dek,
+            pin=pin,
+            check_memory=check_memory,
+        )
+
+    def remove_pin(self) -> bool:
+        """Delete this device's PIN slot. Returns whether one existed.
+
+        Needs no credential (requirement 9.8): it only removes a local convenience
+        that reduces security, so gating it behind a password would be theatre.
+        """
+        from . import pinslot
+
+        existed = pinslot.pin_slot_exists(self.config_dir)
+        pinslot.PinSlotFile(pinslot.pin_slot_path(self.config_dir)).delete()
+        return existed
 
     def export_plaintext(self) -> dict[str, Any]:
         """Everything, decrypted, as plain data (requirement 6.5).

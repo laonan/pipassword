@@ -167,7 +167,7 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
 
 ---
 
-- [ ] 18. PIN unlock slot (`pinslot.py`)
+- [x] 18. PIN unlock slot (`pinslot.py`)
   - Requested after production use on the Beepy: a high-entropy master password is
     slow enough on a BBQ20 thumb keyboard to discourage opening the vault at all. An
     11-character lowercase password was offered first as the cheaper answer (same
