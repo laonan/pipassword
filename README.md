@@ -304,6 +304,58 @@ then it moves the current vault aside (to `vault.replaced-<timestamp>`) rather t
 deleting it. This is the deliberate opposite of the legacy tool, whose restore
 overwrote the live database with no snapshot.
 
+### Recovering after an SD card failure
+
+A Raspberry Pi's SD card is the least reliable part of this setup — losing it is more
+likely than losing the device to theft. This is the scenario `backup` and `restore`
+exist for, and full recovery works on a completely fresh system.
+
+**What you need to have kept, in two separate places:**
+
+1. A backup archive (`pipw backup`), or a synced/rclone copy of the vault directory.
+2. **Either** your master password **or** your paper recovery key.
+
+Keep those two apart. If the archive and the password live on the same USB stick, one
+lost stick loses everything and one found stick hands over everything. The archive in
+one place, the recovery key in another.
+
+**The recovery itself**, on the new system:
+
+```bash
+# 1. install pipassword
+curl -fsSL https://raw.githubusercontent.com/laonan/pipassword/main/install.sh | bash
+
+# 2. restore the vault from the backup
+pipw restore /mnt/usb/pw.tar.gz
+
+# 3. unlock, with the master password...
+pipw list
+# ...or, if you have forgotten it, with the paper recovery key:
+pipw list --recovery-key
+```
+
+That is the whole procedure. The restored vault is a normal vault; there is no import
+step, because the files on disk *are* the data.
+
+**What does not come back, and why it does not matter:**
+
+- Your **PIN**. The PIN slot lives in the config directory, which is never in a
+  backup — a PIN only protects a stolen device because its secret never leaves that
+  device. Set a new one on the new machine with `pipw pin set` once you are in. It is
+  a convenience, never a recovery path.
+- The device's **identity and sync state**. The new machine gets a fresh `device_id`
+  and its own (empty) log; your entries are all present from the restored logs.
+
+**If years later `pipw` will not install** on some future OS, the data is still
+recoverable by hand from the same archive — see [Verifying a backup](#verifying-a-backup)
+below, which uses the standalone `recover.py`. That, plus [`FORMAT.md`](FORMAT.md),
+means the format outlives the tool.
+
+> The one hard requirement worth repeating: **the backup is useless without the
+> master password or the recovery key.** No password, no data — that is the point of
+> the encryption, and nobody, including the author of this tool, can override it.
+> Whatever else you do, make sure one of those two secrets survives the card.
+
 ### Restoring
 
 There is no import step. The files on disk *are* the vault, so a restore is putting
