@@ -1074,6 +1074,96 @@ def _force_no_pin(args: argparse.Namespace) -> argparse.Namespace:
     return clone
 
 
+def _default_backup_name() -> str:
+    import datetime
+
+    return f"pipassword-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
+
+
+def cmd_backup(args: argparse.Namespace, console: Console) -> int:
+    """Archive the vault directory to a gzip tarball.
+
+    Needs no password: the vault's files are already encrypted, so the archive is
+    encrypted at rest for free. It is exactly as safe as your keyfile plus master
+    password, which the message below states so it is not mistaken for extra
+    protection.
+    """
+    from . import backup as backup_mod
+
+    vault_dir = resolve_vault_dir(args)
+    output = Path(args.output) if args.output else Path.cwd() / _default_backup_name()
+
+    try:
+        info = backup_mod.create_backup(vault_dir, output)
+    except backup_mod.BackupError as exc:
+        console.err(f"error: {exc}")
+        return 1
+
+    console.out(str(output))
+    console.err(
+        f"Backed up {info.file_count} file(s): {len(info.keyfile_names)} keyfile(s), "
+        f"{len(info.log_names)} log(s)."
+    )
+    console.err(
+        "This archive is encrypted at rest -- its contents are the same ciphertext "
+        "as the vault -- but it is only as safe as your master password. Anyone who "
+        "has both this file and your password has the vault. Store it accordingly, "
+        "and keep your paper recovery key somewhere separate."
+    )
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace, console: Console) -> int:
+    """Extract a backup archive into the vault directory.
+
+    Refuses to overwrite an existing vault unless --force is given, and when forced
+    moves the current vault aside rather than deleting it.
+    """
+    from . import backup as backup_mod
+
+    vault_dir = resolve_vault_dir(args)
+    archive = Path(args.archive)
+
+    try:
+        info = backup_mod.inspect_archive(archive)
+    except backup_mod.BackupError as exc:
+        console.err(f"error: {exc}")
+        return 1
+
+    console.err(
+        f"Archive created {info.created}, vault {info.vault_uuid or 'unknown'}, "
+        f"{info.file_count} file(s)."
+    )
+
+    existing = fmt.find_keyfile_generations(vault_dir) if vault_dir.exists() else []
+    if existing and not args.force:
+        console.err(
+            f"error: {vault_dir} already contains a vault. Use --force to replace it "
+            f"(the current vault is moved aside, not deleted), or restore to an empty "
+            f"path with --vault."
+        )
+        return 1
+    if existing and not console.confirm(
+        f"Replace the vault at {vault_dir}? The current one is moved aside first."
+    ):
+        console.err("Cancelled.")
+        return 1
+
+    try:
+        backup_mod.restore_backup(archive, vault_dir, force=args.force)
+    except backup_mod.BackupError as exc:
+        console.err(f"error: {exc}")
+        return 1
+
+    console.out(f"Restored to {vault_dir}")
+    console.err(
+        "Unlock it to confirm. If this device did not create the backup, its own "
+        "device id and any PIN are separate and were not restored -- set a PIN again "
+        "with 'pipw pin set' if you want one here."
+    )
+    return 0
+
+
 def cmd_where(args: argparse.Namespace, console: Console) -> int:
     vault_dir = resolve_vault_dir(args)
     config_dir = resolve_config_dir(args)
@@ -1275,6 +1365,23 @@ def build_parser() -> argparse.ArgumentParser:
     pin_sub.add_parser("remove", help="remove this device's PIN (no password needed)")
     pin_sub.add_parser("status", help="show whether a PIN is set and its state")
     p_pin.set_defaults(func=cmd_pin)
+
+    p_backup = sub.add_parser(
+        "backup", help="archive the vault to a .tar.gz (no password needed)"
+    )
+    p_backup.add_argument(
+        "-o", "--output", help="archive path (default: ./pipassword-<timestamp>.tar.gz)"
+    )
+    p_backup.set_defaults(func=cmd_backup)
+
+    p_restore = sub.add_parser("restore", help="restore a vault from a .tar.gz backup")
+    p_restore.add_argument("archive", help="the .tar.gz backup to restore")
+    p_restore.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing vault (it is moved aside, not deleted)",
+    )
+    p_restore.set_defaults(func=cmd_restore)
 
     p_where = sub.add_parser("where", help="show vault and config paths")
     p_where.set_defaults(func=cmd_where)

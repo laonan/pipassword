@@ -162,6 +162,8 @@ pipw calibrate              measure unlock time on this device
 pipw import-legacy [--dry-run]
 pipw import-json PATH [--dry-run]
 pipw benchmark [-n 10000]   measure the unlock hot path on this device
+pipw backup [-o FILE]       archive the vault to a .tar.gz (no password needed)
+pipw restore ARCHIVE [--force]          restore a vault from a .tar.gz
 pipw recovery-script -o recover.py      write out the standalone recovery tool
 pipw where                  show vault and config paths
 ```
@@ -274,6 +276,33 @@ removes a single point of failure. It is small enough to print:
 ```bash
 base64 ~/.local/share/pipassword/vault/keys.1.mpk
 ```
+
+### One-file backups
+
+For a single portable file rather than a synced directory:
+
+```bash
+pipw backup                      # writes ./pipassword-<timestamp>.tar.gz
+pipw backup -o /mnt/usb/pw.tar.gz
+```
+
+No password is needed to create it: every file inside is already encrypted, so the
+archive is ciphertext. That also means it is only as safe as your master password --
+anyone with both the archive and your password has the vault, so store it like you
+would the vault itself.
+
+The archive contains the vault directory only. Your device id, per-device state, and
+any **PIN slot are deliberately excluded** -- a PIN is worthless to an attacker only
+because its secret never leaves the device, so a backup must not carry it.
+
+```bash
+pipw restore pipassword-20260921.tar.gz
+```
+
+`restore` refuses to overwrite an existing vault unless you pass `--force`, and even
+then it moves the current vault aside (to `vault.replaced-<timestamp>`) rather than
+deleting it. This is the deliberate opposite of the legacy tool, whose restore
+overwrote the live database with no snapshot.
 
 ### Restoring
 

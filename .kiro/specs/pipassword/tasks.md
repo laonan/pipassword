@@ -198,6 +198,18 @@ exists before any real data is imported** (tasks 7–8 precede task 10).
     heading that makes the theft exposure impossible to miss
   - _Requirements: 9.1-9.15_
 
+- [x] 19. Backup and restore (`backup.py`)
+  - Requested after real use: syncing and rclone worked but felt heavy for an
+    occasional one-file backup
+  - `create_backup` tars the vault directory (only) to gzip; no password, since the
+    contents are already ciphertext. Config dir excluded, so pin.unlock never travels
+  - `restore_backup` refuses to clobber without force, moves the old vault aside when
+    forced, rejects unsafe archive members (traversal, absolute paths, non-regular
+    files), and verifies the result opens or rolls back
+  - CLI `backup`/`restore`, README, and FORMAT.md left unchanged (the archive is a
+    container of vault files, not a new on-disk format)
+  - _Requirements: 3.13a, 3.13b_
+
 ## Deferred
 
 - Log compaction (`mp compact`). The `seq` and coverage fields are specified now; at

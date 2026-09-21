@@ -221,6 +221,18 @@ anomaly, since requirement 3.2 means one should never occur.
 File replication is delegated to Syncthing. The legacy `upload_db`/`restore_db` code
 path is deliberately not carried forward.
 
+3.13a. The system SHALL provide `backup` and `restore` commands operating on a single
+gzip archive of the vault directory. Creating a backup SHALL NOT require a password,
+because the archived files are already encrypted. The archive SHALL contain the vault
+directory only, never the config directory, so a `pin.unlock` slot is never bundled
+with the vault it guards.
+
+3.13b. `restore` SHALL refuse to overwrite an existing vault unless forced, and when
+forced SHALL move the existing vault aside rather than deleting it. This is a direct
+correction of the legacy `restore_db`, which overwrote the live database with neither
+a snapshot nor validation. `restore` SHALL verify the restored vault opens before
+reporting success, and SHALL roll back to the prior vault if it does not.
+
 3.14. The system SHALL support at least 10,000 records with unlock under 3 seconds on
 a Pi Zero 2 W, excluding KDF time.
 
